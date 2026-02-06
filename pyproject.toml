@@ -7,3 +7,6 @@ dependencies = [
     "numpy>=2.4.2",
     "pre-commit>=4.5.1",
 ]
+
+[tool.ruff.lint]
+select = ["F", "I", "B", "UP"]
