@@ -25,11 +25,18 @@ Parts of the equation represent:
 
 ### PDE Simulation
 
+### How to run the project
 
+Python environment is handled using [uv](https://github.com/astral-sh/uv). To activate it run:
+
+```bash
+uv sync
+source .venv/bin/activate
+```
+
+This repository uses precommit hooks to keep the code clean.
 
 ---
-
-
 
 ### Bibliography
 
