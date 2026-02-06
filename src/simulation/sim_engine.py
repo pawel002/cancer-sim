@@ -3,8 +3,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 
 import numpy as np
-
-from .sim_config import SimConfig
+from sim_config import SimConfig
 
 
 @dataclass
@@ -23,7 +22,7 @@ class SimState:
     @property
     def total_mass(self) -> float:
         """Returns total tumor mass (integral of u)."""
-        return np.sum(self.u) * (self.config.dx**self.config.DIM)
+        return np.sum(self.u) * (self.config.dx**self.config.dim)
 
 
 class SimEngine:
@@ -42,7 +41,7 @@ class SimEngine:
     def _initialize_state(self):
         """Sets up the initial u matrix and Hypoxia map."""
 
-        axes = [np.linspace(0, self.cfg.L, self.cfg.N) for _ in range(self.cfg.DIM)]
+        axes = [np.linspace(0, self.cfg.L, self.cfg.N) for _ in range(self.cfg.dim)]
         grids = np.meshgrid(*axes, indexing="ij")
         center = self.cfg.L / 2.0
         r_squared = sum((g - center) ** 2 for g in grids)
@@ -90,9 +89,9 @@ class SimEngine:
 
         u += du * self.cfg.dt
 
-        if self.cfg.DIM == 2:
+        if self.cfg.dim == 2:
             u[0, :] = u[-1, :] = u[:, 0] = u[:, -1] = 0
-        elif self.cfg.DIM == 3:
+        elif self.cfg.dim == 3:
             u[0, :, :] = u[-1, :, :] = u[:, 0, :] = 0
             u[:, -1, :] = u[:, :, 0] = u[:, :, -1] = 0
 

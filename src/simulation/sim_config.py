@@ -9,7 +9,7 @@ class SimConfig(BaseModel):
     Validates stability criteria upon initialization.
     """
 
-    DIM: Literal[2, 3] = Field(2, description="Spatial dimensionality (2 or 3)")
+    dim: Literal[2, 3] = Field(2, description="Spatial dimensionality (2 or 3)")
     L: float = Field(10.0, gt=0, description="Domain size in cm")
     N: int = Field(100, gt=10, description="Grid points per dimension")
     T_max: float = Field(20.0, gt=0, description="Total simulation time in days")
@@ -36,7 +36,7 @@ class SimConfig(BaseModel):
         Validates the Von Neumann stability condition for the diffusion term.
         """
 
-        limit = (self.dx**2) / (2 * self.D * self.dim)
+        limit = (self.dx**2) / (2 * self.D_coeff * self.dim)
 
         if self.dt > limit:
             raise ValueError(
