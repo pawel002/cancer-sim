@@ -1,4 +1,3 @@
-import matplotlib.pyplot as plt
 from sim_config import SimConfig
 from sim_engine import SimEngine
 from sim_hooks import GifPlotter, log_progress
@@ -15,4 +14,3 @@ if __name__ == "__main__":
     engine.run()
 
     plotter.save_gif()
-    

@@ -1,8 +1,10 @@
-import matplotlib.pyplot as plt
-from sim_engine import SimState
 import os
 import shutil
+
 import imageio
+import matplotlib.pyplot as plt
+from sim_engine import SimState
+
 
 def log_progress(state: SimState):
     mass = state.total_mass
@@ -12,7 +14,7 @@ def log_progress(state: SimState):
 class GifPlotter:
     def __init__(self, save_path: str):
         self.save_path = save_path
-        self.frames_dir = os.path.join(self.save_path, 'frames')
+        self.frames_dir = os.path.join(self.save_path, "frames")
 
         # if directory exists, clear it
         if os.path.exists(self.frames_dir):
@@ -22,7 +24,7 @@ class GifPlotter:
 
         self.fig, self.ax = plt.subplots()
         self.im = None
-        self.frame_paths = []
+        self.frame_paths: list[str] = []
         self.frame_count = 0
 
     def update(self, state):
@@ -40,7 +42,7 @@ class GifPlotter:
         self.fig.canvas.flush_events()
 
         filename = os.path.join(self.frames_dir, f"frame_{self.frame_count:05d}.png")
-        
+
         self.fig.savefig(filename)
         self.frame_paths.append(filename)
         self.frame_count += 1
@@ -49,10 +51,9 @@ class GifPlotter:
         gif_path = os.path.join(self.save_path, "simulation.gif")
         print(f"Compiling {len(self.frame_paths)} frames into {gif_path}...")
 
-        with imageio.get_writer(gif_path, mode='I', fps=fps) as writer:
+        with imageio.get_writer(gif_path, mode="I", fps=fps) as writer:
             for filename in self.frame_paths:
                 image = imageio.imread(filename)
                 writer.append_data(image)
-        
-        print("GIF saved successfully.")
 
+        print("GIF saved successfully.")
