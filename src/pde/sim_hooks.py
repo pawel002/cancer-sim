@@ -3,10 +3,10 @@ import shutil
 
 import imageio
 import matplotlib.pyplot as plt
-from sim_engine import SimState
+from sim_engine import SimStatePDE
 
 
-def log_progress(state: SimState):
+def log_progress(state: SimStatePDE):
     mass = state.total_mass
     print(f"[Step {state.step_iteration}] t={state.t:.2f} | Tumor Mass: {mass:.4f}")
 
@@ -27,7 +27,7 @@ class GifPlotter:
         self.frame_paths: list[str] = []
         self.frame_count = 0
 
-    def update(self, state):
+    def update(self, state: SimStatePDE):
         if self.im is None:
             self.im = self.ax.imshow(
                 state.u, origin="lower", vmin=0, vmax=1, cmap="inferno"
