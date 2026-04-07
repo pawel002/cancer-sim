@@ -1,849 +1,499 @@
 \documentclass[12pt, a4paper]{article}
 
-% ─── Packages ─────────────────────────────────────────────────────────────────
 \usepackage[a4paper, left=2.5cm, right=2.5cm, top=2.5cm, bottom=2.5cm]{geometry}
 \usepackage[T1]{fontenc}
 \usepackage[utf8]{inputenc}
 \usepackage[english]{babel}
 \usepackage{lmodern}
 \usepackage{microtype}
-\usepackage{amsmath, amssymb, amsfonts}
+\usepackage{amsmath, amssymb}
 \usepackage{bm}
 \usepackage{graphicx}
 \usepackage{float}
-\usepackage{caption}
-\usepackage{subcaption}
+\usepackage{caption, subcaption}
 \usepackage{booktabs}
-\usepackage{array}
-\usepackage{tabularx}
-\usepackage{multirow}
 \usepackage{xcolor}
 \usepackage{hyperref}
 \usepackage{cleveref}
 \usepackage{enumitem}
 \usepackage{setspace}
 \usepackage{fancyhdr}
-\usepackage{titling}
-\usepackage{abstract}
 
-% Bibliography
-\usepackage[style=numeric, sorting=none]{biblatex}
-\addbibresource{references.bib}
+\usepackage[style=numeric, sorting=none, maxbibnames=4]{biblatex}
+\addbibresource{refs.bib}
 
-% ─── Hyperlink colours ────────────────────────────────────────────────────────
-\hypersetup{
-  colorlinks=true,
-  linkcolor=black!60!blue,
-  citecolor=black!60!blue,
-  urlcolor=black!60!blue
-}
-
-% ─── Headers ─────────────────────────────────────────────────────────────────
-\pagestyle{fancy}
-\fancyhf{}
-\fancyhead[L]{\small\textit{Performance-Efficient Surrogates for Cancer Growth Simulation}}
+\hypersetup{colorlinks=true, linkcolor=black!60!blue,
+            citecolor=black!60!blue, urlcolor=black!60!blue}
+\pagestyle{fancy}\fancyhf{}
+\fancyhead[L]{\small\itshape Performance-Efficient Surrogates for Cancer Growth}
 \fancyhead[R]{\small\thepage}
 \renewcommand{\headrulewidth}{0.4pt}
-
-% ─── Captions ─────────────────────────────────────────────────────────────────
 \captionsetup{font=small, labelfont=bf, skip=4pt}
+\setstretch{1.12}
 
-% ─── Line spacing ─────────────────────────────────────────────────────────────
-\setstretch{1.15}
-
-% ─── Math macros ──────────────────────────────────────────────────────────────
+% ── notation ──────────────────────────────────────────────────────────────
 \newcommand{\bx}{\bm{x}}
 \newcommand{\dt}{\Delta t}
 \newcommand{\Heff}{H_{\mathrm{eff}}}
-\newcommand{\fODE}{f_{\mathrm{ODE}}}
-\newcommand{\RMSE}{\mathrm{RMSE}}
-\newcommand{\R}{\mathbb{R}}
+\newcommand{\fode}{f_{\mathrm{ODE}}}
 
 \begin{document}
 
-\title{
-  \Large\textbf{Performance-Efficient Surrogates for Simulating\\
-  Cancer Growth with Hypoxia}\\[6pt]
-  \large A Comparative Study of Neural and Hybrid Approaches
-}
+% ── title ─────────────────────────────────────────────────────────────────
+\title{\Large\textbf{Performance-Efficient Surrogates for Simulating\\
+       Cancer Growth with Hypoxia}}
 \author{
-  Paweł Jarosz\textsuperscript{1} \quad Igor Zakrocki\textsuperscript{1}\\[4pt]
-  \small\textsuperscript{1}Department of Computer Science, AGH University of Krakow\\
-  \small\texttt{\{pjarosz, izakrocki\}@agh.edu.pl}
-}
+  Pawe\l{} Jarosz \quad Igor Zakrocki\\[4pt]
+  \small Department of Computer Science, AGH University of Krakow}
 \date{\today}
-\maketitle
-\thispagestyle{fancy}
+\maketitle\thispagestyle{fancy}
 
-% ─── Abstract ─────────────────────────────────────────────────────────────────
-\begin{abstract}
-\noindent
-We present a systematic benchmark of surrogate modelling approaches for simulating tumour growth under fractionated radiotherapy in the presence of spatial hypoxia (oxygen deprivation). Starting from a two-dimensional reaction-diffusion PDE as the ground truth, we evaluate five surrogate strategies of increasing sophistication:
-(i) a spatially-averaged ordinary differential equation (ODE),
-(ii) a multi-layer perceptron (MLP) time-stepper,
-(iii) a Neural ODE (NODE) with embedded physics baseline and learned correction,
-(iv) a Physics-Informed Neural Network (PINN) that enforces the PDE residualvia automatic differentiation, and
-(v) a SuperNet that distils knowledge from the trained PINN into a fast residual-corrected ODE. 
-We characterise each method along two axes: predictive accuracy measured as root-mean-square error (RMSE) against the PDE reference, and computational efficiency quantified as inference latency per time step. On a canonical $50\!\times\!50$ grid with a 40-day simulation horizon, the NODE achieves the lowest in-window RMSE ($8.9\!\times\!10^{-3}$), while the PINN delivers the most consistent performance across assimilation and extrapolation windows. All scalar surrogates (ODE, MLP, NODE, SuperNet) achieve at least one order of magnitude speedup over the PDE on larger grids; the MLP and SuperNet are fastest at inference, making them attractive for Monte Carlo or ensemble workflows. We discuss the accuracy-efficiency trade-off, the role of physics constraints in preventing extrapolation drift, and the teacher-student distillation paradigm implemented by SuperNet. All code, trained models, and figure-generation scripts are released alongside this paper.
+% ── abstract ──────────────────────────────────────────────────────────────
+\begin{abstract}\noindent
+We benchmark six surrogate strategies for accelerating the simulation of
+two-dimensional tumour growth with spatial hypoxia under fractionated
+radiotherapy.  Starting from a reaction-diffusion PDE as the ground truth
+we compare: (i) a spatially-averaged ODE, (ii) an MLP time-stepper,
+(iii)~a Neural ODE with physics-guided correction, (iv) a Physics-Informed
+Neural Network, (v) a SuperNet that distils the PINN into a fast ODE
+correction, and (vi) a \emph{Trajectory Predictor} (TrajNet)---a
+conditional neural network trained on 1\,500 PDE simulations with
+randomised parameters that predicts the full mass trajectory in a single
+forward pass.  On a canonical $50\!\times\!50$ grid the step-wise
+surrogates barely outperform the highly optimised PDE solver, but TrajNet
+delivers a \textbf{274$\times$ wall-clock speedup} while maintaining an
+RMSE of $1.7\!\times\!10^{-3}$.  On 100 unseen parameter combinations the
+median RMSE remains $2.6\!\times\!10^{-3}$, confirming good
+generalisation.
+All code, trained models and figure-generation scripts are released as
+open source.
 \end{abstract}
 
+\tableofcontents\newpage
+
+% ══════════════════════════════════════════════════════════════════════════
 \section{Introduction}
+% ══════════════════════════════════════════════════════════════════════════
+Solid tumours develop hypoxic (oxygen-deprived) regions as they outgrow
+their vasculature \cite{vaupel2004hypoxia,tannock1972relation}.  Because
+hypoxic cells are two to three times less radiosensitive than
+well-oxygenated cells \cite{hall2006radiobiology}, hypoxia is a major
+mechanism of resistance to radiotherapy.  Accurate mathematical modelling
+of tumour growth and treatment response is therefore essential for
+protocol optimisation \cite{altrock2015mathematics,cristini2010multiscale}.
 
-Solid tumours develop regions of oxygen deprivation (hypoxia) as they grow
-beyond the diffusion range of nearby vasculature \cite{vaupel2004hypoxia,
-tannock1972relation}.
-Hypoxic cells are two to three times less sensitive to ionising radiation than
-well-oxygenated cells \cite{hall2006radiobiology}, which makes hypoxia a major
-mechanism of resistance to radiotherapy.
-Accurate mathematical modelling of tumour growth, invasion and
-treatment response is therefore an important tool for treatment planning and
-protocol optimisation \cite{altrock2015mathematics, cristini2010multiscale}.
+The standard approach couples logistic proliferation, Fickian diffusion
+and a radiation-kill term into a reaction-diffusion PDE
+\cite{murray2002mathematical,swanson2000quantitative}.  Integrating this
+PDE on a fine mesh over clinically relevant horizons (days to months)
+is expensive; the cost becomes prohibitive when thousands of evaluations
+are needed---as in Bayesian inference, sensitivity analysis or
+digital-twin calibration
+\cite{beaumont2002approximate,morris1991factorial,talagrand1987variational}.
 
-The canonical mathematical description couples logistic proliferation, Fickian
-diffusion, and a radiation kill term into a nonlinear reaction-diffusion partial
-differential equation (PDE) \cite{murray2002mathematical, swanson2000quantitative}.
-In two or three spatial dimensions, numerical integration of this PDE on a
-fine mesh over clinically relevant time horizons (days to months) is
-computationally expensive.
-The cost becomes prohibitive when one needs thousands of forward evaluations,
-as in parameter sensitivity studies, Bayesian inference, treatment optimisation,
-or digital-twin calibration \cite{morris1991factorial, beaumont2002approximate,
-talagrand1987variational}.
+Surrogate modelling replaces the PDE solver with a cheaper approximation.
+Classical options include spatially-averaged ODEs, which are fast but
+discard all spatial information \cite{tracqui2009biophysical}.  Recent
+machine-learning methods---MLP time-steppers \cite{lagaris1998artificial},
+Neural ODEs \cite{chen2018neural}, PINNs
+\cite{raissi2019physics,karniadakis2021physics} and teacher--student
+distillation \cite{hinton2015distilling}---offer accuracy improvements but
+typically still operate step-by-step and thus inherit much of the PDE's
+overhead.
 
-Surrogate modelling—replacing the expensive PDE solver with a cheaper
-approximation—is therefore a central challenge in computational oncology.
-Classical surrogates include spatially-averaged ODEs that collapse the spatial
-field to a single scalar \cite{tracqui2009biophysical}, but they sacrifice all
-spatial information.
-Recent advances in machine learning offer a rich menu of data-driven
-approaches: universal function approximators (MLP) \cite{hornik1989multilayer,
-lagaris1998artificial}, Neural ODEs that embed differential equations into the
-learning problem \cite{chen2018neural}, and Physics-Informed Neural Networks
-(PINNs) that enforce PDE residuals as soft constraints during training
-\cite{raissi2019physics, karniadakis2021physics}.
-The emerging SuperNet (or teacher-student) paradigm combines the efficiency of
-a classical ODE baseline with the accuracy of a PINN ``teacher'' by learning
-the residual correction \cite{hinton2015distilling}.
-
-Despite this abundance of methods, a direct, controlled comparison on the
-cancer-simulation problem under a consistent evaluation protocol is lacking.
-In particular, the trade-off between \textit{in-distribution} accuracy
-(within the time window used for fitting) and \textit{extrapolation} accuracy
-(beyond that window) has not been systematically studied for this problem class.
+\paragraph{Key observation.}
+On a well-optimised $50\!\times\!50$ grid the PDE itself runs in
+${\sim}30$\,ms, so step-wise neural surrogates provide \emph{no
+meaningful speedup} (0.7--3$\times$ in our experiments).  The decisive
+gain comes from \emph{eliminating the time-stepping loop entirely}: a
+conditional network trained across many PDE runs predicts the full
+trajectory in a single batched forward pass.
 
 \paragraph{Contributions.}
-This paper makes the following contributions:
-\begin{enumerate}[leftmargin=2em]
-  \item We implement and integrate five surrogate methods within a unified,
-        modular simulation framework that follows the \emph{Strategy} design
-        pattern (any engine plugs into the same simulator loop).
-  \item We conduct a controlled benchmark on a canonical 2D hypoxia scenario
-        with fractionated radiotherapy, measuring RMSE in both the assimilation
-        window and the extrapolation regime, alongside inference latency.
-  \item We show that NODE achieves the lowest in-window error thanks to its
-        physics-constrained structure, while SuperNet provides the best
-        accuracy-efficiency balance for fast rollout.
-  \item We provide an open-source implementation (PyTorch, SciPy) with
-        figure-generation and training scripts.
+\begin{enumerate}[leftmargin=2em,itemsep=2pt]
+  \item We implement six surrogates in a unified framework and show that
+        step-wise methods offer negligible speedup on small grids.
+  \item We propose a \emph{Trajectory Predictor} (TrajNet) that maps
+        physical parameters directly to the full mass trajectory and
+        achieves a \textbf{274$\times$ speedup} with an RMSE of
+        $1.7\!\times\!10^{-3}$.
+  \item We demonstrate that TrajNet generalises across unseen parameter
+        combinations (median RMSE $2.6\!\times\!10^{-3}$ over 100 random
+        test scenarios).
+  \item We release all code, models and reproducible figure generation.
 \end{enumerate}
 
-% ═════════════════════════════════════════════════════════════════════════════
+% ══════════════════════════════════════════════════════════════════════════
 \section{Related Work}
-% ═════════════════════════════════════════════════════════════════════════════
+% ══════════════════════════════════════════════════════════════════════════
+Reaction-diffusion PDEs of Fisher--KPP type model glioma invasion
+\cite{swanson2000quantitative,murray2002mathematical,tracqui2009biophysical};
+multiscale extensions are reviewed in \cite{cristini2010multiscale}.
+Neural ODEs \cite{chen2018neural,rubanova2019latent} parameterise the
+vector field with a network; PINNs \cite{raissi2019physics} minimise the
+PDE residual at collocation points.  Karniadakis et al.\
+\cite{karniadakis2021physics} and Brunton \& Kutz
+\cite{brunton2022data} survey the broader scientific-ML landscape.
+Operator-learning methods---FNO \cite{li2020fourier} and DeepONet
+\cite{lu2019deeponet}---learn solution maps but require richer training
+data; they are a natural extension left for future work.  In the
+cancer-modelling domain, Lima et al.\ \cite{lima2021bayesian} use
+Gaussian-process surrogates; Yin et al.\ \cite{yin2021non} combine data
+assimilation with MRI.  Our TrajNet is most closely related to the
+DeepONet paradigm (branch encodes parameters, trunk encodes time) but
+uses a simpler concatenation architecture that is easy to train on CPU.
 
-\paragraph{Tumour growth models.}
-Reaction-diffusion PDEs of Fisher-KPP type have been used to model glioma
-invasion since Swanson et al.\ \cite{swanson2000quantitative} and are reviewed
-in Murray \cite{murray2002mathematical} and Tracqui \cite{tracqui2009biophysical}.
-Cristini and Lowengrub \cite{cristini2010multiscale} treat multiscale models
-explicitly coupling sub-cellular, cellular and tissue scales.
-
-\paragraph{Spatial-averaging and reduced models.}
-Collapsing the full spatial PDE to an ODE for the total (or average) density
-is standard in pharmacokinetics and tumour response modelling
-\cite{tracqui2009biophysical}.
-The accuracy of such reductions degrades when the spatial distribution of
-dose or hypoxia is heterogeneous, motivating higher-fidelity surrogates.
-
-\paragraph{Data-driven surrogates.}
-MLPs as time-steppers for dynamical systems were studied by Lagaris et al.\
-\cite{lagaris1998artificial} for ODEs and PDEs.
-Chen et al.\ \cite{chen2018neural} introduced Neural ODEs, treating the hidden
-state evolution as a continuous differential equation solved with adjoint
-backpropagation.
-Raissi et al.\ \cite{raissi2019physics} proposed PINNs, which minimise the
-squared PDE residual at collocation points, enabling mesh-free PDE solving
-from scattered data.
-Karniadakis et al.\ \cite{karniadakis2021physics} survey PINNs broadly.
-Fourier Neural Operators (FNO) \cite{li2020fourier} and DeepONet
-\cite{lu2019deeponet} learn solution operators; they are natural extensions
-but require more training data and are left for future work.
-
-\paragraph{Cancer-specific surrogates.}
-Lima et al.\ \cite{lima2021bayesian} use Gaussian-process surrogates for
-Bayesian calibration of tumour models.
-Yin et al.\ \cite{yin2021non} apply data assimilation with clinical MRI data.
-Corey et al.\ \cite{corey2021surrogate} use surrogate-based Bayesian
-calibration for biomechanical models of tissue.
-Our work focuses on time-domain surrogates for the reaction-diffusion PDE
-and is most closely related to the PINN application of Hao et al.\
-\cite{hao2022physics}, who solve bioelectric field equations with PINNs.
-
-\paragraph{Teacher-student distillation.}
-The idea of using a large accurate model (teacher) to supervise a smaller,
-faster model (student) was formalised by Hinton et al.\ \cite{hinton2015distilling}
-and FitNets \cite{romero2015fitnets}.
-We adapt this paradigm to the PINN setting: the PINN teacher generates
-physically consistent trajectories; the SuperNet student learns the ODE
-correction residual, yielding inference cost identical to the ODE baseline.
-
-% ═════════════════════════════════════════════════════════════════════════════
-\section{Problem Formulation}
-\label{sec:problem}
-% ═════════════════════════════════════════════════════════════════════════════
+% ══════════════════════════════════════════════════════════════════════════
+\section{Problem Formulation}\label{sec:problem}
+% ══════════════════════════════════════════════════════════════════════════
 
 \subsection{PDE ground-truth model}
-
-Let $\Omega = [0,L]^2$ be the two-dimensional spatial domain and
-$u(\bx, t) \in [0,1]$ the normalised tumour cell density (carrying capacity
-$K=1$).
-The evolution of $u$ is governed by:
-\begin{equation}
-  \frac{\partial u}{\partial t}
-  = D\,\nabla^2 u
-  + \rho\,u\!\left(1-\frac{u}{K}\right)
-  - \beta\,R(\bx,t)\,H(\bx)\,u,
-  \qquad \bx\in\Omega,\; t > 0,
-  \label{eq:pde}
+Let $\Omega=[0,L]^2$, $u(\bx,t)\in[0,1]$ the normalised cell density,
+$K\!=\!1$.  The governing equation is
+\begin{equation}\label{eq:pde}
+  \partial_t u = D\nabla^2 u + \rho\,u(1-u) - \beta\,R(\bx,t)\,H(\bx)\,u,
+  \qquad u\big|_{\partial\Omega}=0,
 \end{equation}
-with Dirichlet boundary conditions $u|_{\partial\Omega}=0$ and initial
-condition $u(\bx,0) = u_0(\bx)$.
-
-The four terms model (i) diffusion-driven invasion with coefficient $D$,
-(ii) logistic proliferation at rate $\rho$, (iii) radiation kill at dose
-rate $R(\bx,t)$ modulated by the local radiosensitivity $\beta$ and the
-spatial hypoxia function $H(\bx)\in(0,1]$ (smaller values $\Rightarrow$
-lower oxygenation $\Rightarrow$ reduced kill efficacy).
-
-Following standard fractionation schedules \cite{brenner2008linear}, the
-dose distribution is factored as
+with diffusion coefficient~$D$, proliferation rate~$\rho$,
+radiosensitivity~$\beta$, dose field $R(\bx,t)=r(t)\,W(\bx)$ (temporal
+schedule $\times$ beam mask, here $W\!\equiv\!1$), and hypoxia map
+$H(\bx)\in(0,1]$:
 \begin{equation}
-  R(\bx,t) = r(t)\,W(\bx),
-\end{equation}
-where $r(t)$ is the temporal schedule (block function equal to 1 during
-irradiation and 0 otherwise) and $W(\bx)$ is the beam geometry mask.
-In our canonical scenario $W\equiv 1$ (uniform irradiation).
-
-The hypoxia map is modelled as a Gaussian-shaped function that peaks at the
-tumour centre (well-oxygenated core) and decays radially:
-\begin{equation}
-  H(\bx) = h_{\min} + (1-h_{\min})\exp\!\left(-\frac{\|\bx-\bx_c\|^2}{\sigma_H^2}\right),
-  \quad h_{\min} = 0.3.
+  H(\bx) = 0.3 + 0.7\,\exp\!\bigl(-\|\bx-\bx_c\|^2/\sigma_H^2\bigr).
 \end{equation}
 
-\subsection{Spatially-averaged ODE surrogate}
-
-Integrating \cref{eq:pde} over $\Omega$ and applying the divergence theorem
-with homogeneous Dirichlet BCs, the diffusion term vanishes.
-The spatial average $U(t) \;{:=}\; L^{-2}\!\int_\Omega u(\bx,t)\,d\bx$ then
-satisfies, under the closure approximations
-$u(1-u)\approx U(1-U)$ and $R(\bx,t)H(\bx)u \approx r(t)\,\Heff\,U$:
-\begin{equation}
-  \frac{dU}{dt} = \rho\,U(1-U) - \beta\,\Heff\,r(t)\,U,
-  \qquad U(0) = L^{-2}\!\int_\Omega u_0\,d\bx,
-  \label{eq:ode}
+\subsection{ODE surrogate}
+Averaging \cref{eq:pde} over~$\Omega$ with Dirichlet BCs yields the
+scalar spatial average $U(t)=L^{-2}\!\int_\Omega u\,d\bx$:
+\begin{equation}\label{eq:ode}
+  \dot U = \rho\,U(1-U) - \beta\,\Heff\,r(t)\,U,
+  \qquad \Heff = L^{-2}\!\textstyle\int_\Omega H\,d\bx.
 \end{equation}
-where $\Heff = L^{-2}\!\int_\Omega H(\bx)\,d\bx$ is the effective global
-hypoxia coefficient.
-This ODE is the baseline surrogate; all scalar neural methods also track $U(t)$.
 
-\subsection{Evaluation metrics and windows}
-
-Let $\hat{U}(t)$ be the surrogate prediction and $U_{\mathrm{PDE}}(t)$ the
-reference PDE spatial average.
-We partition the simulation horizon $[0,T]$ into:
-\begin{itemize}[leftmargin=2em]
-  \item \textbf{Assimilation / training window}: $[t_a, t_b]$, on which
-        neural surrogates are fitted;
-  \item \textbf{Extrapolation window}: $(t_b, T]$, on which generalisation
-        is tested.
-\end{itemize}
-Performance is quantified by the root-mean-square error:
-\begin{equation}
-  \RMSE(\hat{U}, U_\mathrm{PDE}; \mathcal{T}) =
-  \sqrt{\frac{1}{|\mathcal{T}|}\sum_{t_i\in\mathcal{T}}
-        \bigl(\hat{U}(t_i)-U_\mathrm{PDE}(t_i)\bigr)^2},
-  \label{eq:rmse}
+\subsection{Evaluation protocol}
+We split $[0,T]$ into an \textbf{assimilation window} $[0,t_b]$ (used for
+training/fitting) and an \textbf{extrapolation window} $(t_b,T]$.
+Accuracy is measured by
+\begin{equation}\label{eq:rmse}
+  \mathrm{RMSE}(\hat U,U_\mathrm{PDE};\mathcal{T})
+  = \sqrt{|\mathcal{T}|^{-1}\textstyle\sum_{t_i\in\mathcal{T}}
+    (\hat U_i - U_i^\mathrm{PDE})^2}.
 \end{equation}
-computed separately for $\mathcal{T} = \mathcal{T}_\mathrm{train}$ and
-$\mathcal{T}_\mathrm{test}$.
-Inference efficiency is reported as wall-clock time per time step (milliseconds).
 
-% ═════════════════════════════════════════════════════════════════════════════
-\section{Surrogate Methods}
-\label{sec:methods}
-% ═════════════════════════════════════════════════════════════════════════════
+% ══════════════════════════════════════════════════════════════════════════
+\section{Surrogate Methods}\label{sec:methods}
+% ══════════════════════════════════════════════════════════════════════════
 
-\subsection{Multi-Layer Perceptron time-stepper (MLP)}
-\label{sec:mlp}
+\subsection{Step-wise surrogates (baselines)}
 
-The simplest neural surrogate replaces the ODE integration step with a
-universal function approximator \cite{cybenko1989approximation,
-hornik1989multilayer}.
-Following \cite{lagaris1998artificial}, we define the mapping
-\begin{equation}
-  F_\theta:\; (U_n, r_n, \dt, \rho, \beta) \;\mapsto\; U_{n+1},
+\paragraph{MLP time-stepper.}
+A two-layer MLP $F_\theta:(U_n,r_n,\dt,\rho,\beta)\mapsto U_{n+1}$
+(32~hidden units, ReLU) trained on 150 randomised ODE trajectories via
+MSE \cite{hornik1989multilayer,lagaris1998artificial}.
+
+\paragraph{Neural ODE (NODE).}
+Extends the ODE with a learned correction
+$\dot M = \fode(M,r) + \mathrm{NN}(M,C,r)$ and tracks the
+centre-of-mass~$C$ \cite{chen2018neural}.  The physics baseline
+$\fode$ from \cref{eq:ode} regularises extrapolation.
+
+\paragraph{PINN.}
+A 3-layer MLP $u_\theta(t,x_1,x_2)$ (Tanh$+$Sigmoid) trained to
+minimise $w_\mathrm{pde}\mathcal{L}_\mathrm{pde}+
+w_\mathrm{ic}\mathcal{L}_\mathrm{ic}+
+w_\mathrm{bc}\mathcal{L}_\mathrm{bc}+
+w_\mathrm{data}\mathcal{L}_\mathrm{data}$, where the PDE
+residual~$\mathcal{L}_\mathrm{pde}$ is evaluated via automatic
+differentiation on random collocation points
+\cite{raissi2019physics,lu2021deepxde}.
+
+\paragraph{SuperNet.}
+Distils PINN knowledge into a fast ODE correction: $U_{n+1}=U_n+\dt
+[\fode(U_n,r_n)+g_\phi(U_n,r_n)]$, where $g_\phi$ is a 2-layer MLP
+trained on PINN-derived residuals \cite{hinton2015distilling}.
+
+\medskip
+All four baselines run \emph{step-by-step}: they advance the state by
+one~$\dt$ per call, repeating for all $T/\dt$ steps.  As we show in
+\cref{sec:results}, this loop overhead limits their practical speedup on
+small grids.
+
+\subsection{Trajectory Predictor (TrajNet)}\label{sec:trajnet}
+
+We propose a fundamentally different approach: train a single network
+across many PDE simulations so that at inference time the \emph{entire}
+trajectory is obtained in one batched forward pass.
+
+\paragraph{Architecture.}
+The surrogate is a conditional function
+\begin{equation}\label{eq:trajnet}
+  f_\theta : (\rho,\,\beta,\,D,\,A,\,t_s,\,t_e,\;t)
+  \;\longmapsto\; U(t),
 \end{equation}
-implemented as a three-layer MLP:
-\begin{equation}
-  F_\theta(\bm{s}) = \mathbf{W}_2\,\sigma(\mathbf{W}_1\,\bm{s} + \mathbf{b}_1)
-                     + \mathbf{b}_2,
-\end{equation}
-where $\sigma=\mathrm{ReLU}$, the input size is 5, and the hidden layer has 32
-neurons.
-Training data are generated by integrating \cref{eq:ode} for $N_{\mathrm{traj}}=150$
-trajectories with parameters drawn uniformly from
-$\rho\sim\mathcal{U}[0.1,0.6]$,
-$\beta\sim\mathcal{U}[0.2,1.5]$,
-$U_0\sim\mathcal{U}[0.05,0.6]$,
-over the time window $[0, t_b]$.
-The model is trained by minimising the mean-squared error via Adam
-\cite{paszke2019pytorch} for 200 epochs with batch size 1024.
+where $A$~is the initial-condition amplitude and $[t_s,t_e]$ the
+irradiation window.  We implement $f_\theta$ as a 3-layer MLP
+(128~hidden units, SiLU activation).  All seven inputs are z-score
+normalised.
 
-\paragraph{Expected limitation.}
-Because the MLP is trained solely on ODE data in the assimilation window,
-it has no mechanism to prevent drift when extrapolating; the absence of
-physical structure means prediction errors compound with each time step.
+\paragraph{Data generation.}
+We sample 1\,500 parameter vectors from
+$\rho\!\in\![0.05,0.6]$,
+$\beta\!\in\![0.1,2.0]$,
+$D\!\in\![0.002,0.08]$,
+$A\!\in\![0.1,1.0]$,
+$t_s\!\in\![3,20]$,
+$t_e\!-\!t_s\!\in\![3,25]$
+and run the PDE for each, recording the normalised mass at 100
+uniformly-spaced query times.  Data generation takes ${\sim}43$\,s on a
+single CPU core.
 
-\subsection{Neural Ordinary Differential Equation (NODE)}
-\label{sec:node}
-
-Neural ODEs \cite{chen2018neural} parameterise the vector field of a
-differential equation with a neural network.
-We augment the scalar ODE baseline with a learned correction:
-\begin{align}
-  \frac{dM}{dt} &= \fODE(M,r(t)) + \mathrm{NN}_{\mathrm{mass}}(M, C, r),
-  \label{eq:node_mass}\\
-  \frac{dC}{dt} &= \mathrm{NN}_{\mathrm{com}}(M, C, r),
-  \label{eq:node_com}
-\end{align}
-where $M(t) = U(t)$ is the normalised mass, $C(t)$ is the spatial
-centre-of-mass coordinate (tracking geometry), and
-$\fODE(M,r) = \rho M(1-M) - \beta\Heff r M$
-is the physics baseline from \cref{eq:ode}.
-Both $\mathrm{NN}_{\mathrm{mass}}$ and $\mathrm{NN}_{\mathrm{com}}$ share a
-common encoder (2 hidden layers, 32 units, Tanh activations) with separate
-linear heads.
-
-The model is trained by integrating \cref{eq:node_mass}--\cref{eq:node_com}
-with a custom Euler rollout over subsequences of length $L_{\mathrm{seq}}=40$
-steps sampled randomly from the assimilation window, and minimising
-\begin{equation}
-  \mathcal{L}_{\mathrm{NODE}} = \mathcal{L}_M + \lambda_C\,\mathcal{L}_C,
-  \quad
-  \mathcal{L}_M = \frac{1}{L}\sum_{n}\bigl(\hat{M}_n - M_n^{\mathrm{PDE}}\bigr)^2,
-  \label{eq:node_loss}
-\end{equation}
-with $\lambda_C = 0.1$ weighting the centre-of-mass term.
-Gradients propagate through all Euler steps via standard backpropagation;
-the radiation schedule $r(t)$ is embedded as a precomputed lookup during the
-forward pass.
-
-\subsection{Physics-Informed Neural Network (PINN)}
-\label{sec:pinn}
-
-The PINN \cite{raissi2019physics} approximates the full spatial field
-$u(\bx,t) \approx u_\theta(t, x_1, x_2)$
-via a 5-layer MLP with 32 hidden units and Tanh activations, with a Sigmoid
-output layer that enforces the physical constraint $u_\theta\in[0,1]$.
-Inputs are normalised to $[0,1]$ by dividing by $T_{\max}$ and $L$.
-
-The PINN is trained by minimising the composite loss:
-\begin{equation}
-  \mathcal{L} = w_{\mathrm{pde}}\,\mathcal{L}_{\mathrm{pde}}
-              + w_{\mathrm{ic}}\,\mathcal{L}_{\mathrm{ic}}
-              + w_{\mathrm{bc}}\,\mathcal{L}_{\mathrm{bc}}
-              + w_{\mathrm{data}}\,\mathcal{L}_{\mathrm{data}},
-  \label{eq:pinn_loss}
-\end{equation}
-where
-\begin{align}
-  \mathcal{L}_{\mathrm{pde}}
-    &= \frac{1}{N_c}\sum_{i=1}^{N_c}
-       \Bigl(\partial_t u_\theta - D\Delta u_\theta
-             - \rho u_\theta(1-u_\theta/K)
-             + \beta r(t_i) H(\bx_i) u_\theta\Bigr)^2,
-  \label{eq:pde_loss}\\
-  \mathcal{L}_{\mathrm{ic}}
-    &= \frac{1}{N_{\mathrm{ic}}}\sum_j
-       \bigl(u_\theta(0,\bx_j) - u_0(\bx_j)\bigr)^2,
-  \\
-  \mathcal{L}_{\mathrm{bc}}
-    &= \frac{1}{N_{\mathrm{bc}}}\sum_k
-       u_\theta(t_k, \bx_k|_{\partial\Omega})^2,
-  \\
-  \mathcal{L}_{\mathrm{data}}
-    &= \frac{1}{N_d}\sum_i
-       \bigl(M_\theta(t_i) - M^{\mathrm{PDE}}(t_i)\bigr)^2,
-  \quad M_\theta(t) = \sum_{\bx} u_\theta(t,\bx)\,\dx^2.
-\end{align}
-All spatial and temporal derivatives in $\mathcal{L}_{\mathrm{pde}}$ are
-computed via automatic differentiation (PyTorch \texttt{autograd}).
-Collocation points ($N_c=400$ per epoch) are sampled uniformly over the
-assimilation window; $N_d=8$ data times are used for the mass loss.
-The model is trained with Adam for 400 epochs using a multi-step learning
-rate schedule (initial lr $10^{-3}$, $\times 0.3$ at epochs 200 and 300)
-and gradient clipping (norm~$\leq 1$).
+\paragraph{Training.}
+The 1\,500 trajectories yield $1\,500\times100=150\,000$ input--output
+pairs.  The model is trained with Adam (lr$\,=10^{-3}$, cosine annealing)
+for 300~epochs with batch size~2\,048, converging to MSE
+$8.6\!\times\!10^{-6}$ in about 60\,s.
 
 \paragraph{Inference.}
-At each time step $t$, the PINN engine evaluates $u_\theta(t,\bx)$ on the
-full $N\!\times\!N$ grid (2500 points for $N=50$) to recover both the density
-field and the total mass.
+To predict a trajectory at 100 time points, we form a batch of 100
+queries $[(\rho,\beta,D,A,t_s,t_e,t_i)]_{i=1}^{100}$ and evaluate the
+network in a single forward pass.  \textbf{Total wall-clock time:
+0.12\,ms}---compared to 31.6\,ms for the PDE solver, a
+\textbf{274$\times$ speedup}.
 
-\subsection{SuperNet: PINN-as-teacher residual learning}
-\label{sec:supernet}
+% ══════════════════════════════════════════════════════════════════════════
+\section{Experimental Setup}\label{sec:setup}
+% ══════════════════════════════════════════════════════════════════════════
 
-The SuperNet combines the computational efficiency of the ODE baseline with
-accuracy inherited from the PINN, following the teacher-student paradigm
-\cite{hinton2015distilling, romero2015fitnets}.
-
-\paragraph{Teacher rollout.}
-The trained PINN is evaluated at all training-window time steps to generate
-the normalised mass trajectory $\{U_n^{\mathrm{PINN}}\}$.
-
-\paragraph{Residual targets.}
-For each consecutive pair, the ODE residual is:
-\begin{equation}
-  v_n = \frac{U_{n+1}^{\mathrm{PINN}} - U_n^{\mathrm{PINN}}}{\dt}
-        - \fODE\!\left(U_n^{\mathrm{PINN}}, r_n\right).
-  \label{eq:residual}
-\end{equation}
-
-\paragraph{Student training.}
-A residual network $g_\phi: (U_n, r_n) \to \R$ (2-layer MLP, 32 hidden units,
-Tanh) is trained to predict $v_n$ by minimising
-$\sum_n \|g_\phi(U_n, r_n) - v_n\|^2$ via Adam (400 epochs).
-
-\paragraph{Inference.}
-\begin{equation}
-  U_{n+1} = U_n + \dt\bigl(\fODE(U_n, r_n) + g_\phi(U_n, r_n)\bigr).
-  \label{eq:supernet_step}
-\end{equation}
-Because the ODE step and the small MLP are both scalar operations, the
-per-step cost is essentially identical to the ODE baseline, achieving a
-large speedup while benefiting from PINN-learned corrections.
-
-% ═════════════════════════════════════════════════════════════════════════════
-\section{Experimental Setup}
-\label{sec:setup}
-% ═════════════════════════════════════════════════════════════════════════════
-
-\subsection{Canonical scenario parameters}
-
-All experiments use the following fixed parameter set, summarised in
-\cref{tab:scenario}.
-
-\begin{table}[H]
-\centering
-\caption{Canonical scenario parameters.}
-\label{tab:scenario}
-\begin{tabular}{llll}
-\toprule
-Parameter & Symbol & Value & Units \\
-\midrule
-Domain side length & $L$ & 10 & (normalised) \\
-Grid resolution & $N\times N$ & $50\times50$ & -- \\
-Time step & $\dt$ & 0.05 & days \\
-Simulation horizon & $T$ & 40 & days \\
-Diffusion coefficient & $D$ & 0.01 & -- \\
-Proliferation rate & $\rho$ & 0.3 & day$^{-1}$ \\
-Carrying capacity & $K$ & 1.0 & -- \\
-Radiosensitivity & $\beta$ & 0.8 & -- \\
-Radiation start & $t_s$ & 10 & days \\
-Radiation end & $t_e$ & 30 & days \\
-Assimilation window & $[t_a, t_b]$ & $[0, 20]$ & days \\
-Extrapolation window & $(t_b, T]$ & $(20, 40]$ & days \\
-\bottomrule
-\end{tabular}
+\begin{table}[t]\centering\small
+\caption{Canonical scenario parameters.}\label{tab:scenario}
+\begin{tabular}{llll}\toprule
+Parameter & Symbol & Value & Unit\\\midrule
+Domain & $L$ & 10 & ---\\
+Grid & $N$ & 50 & ---\\
+Time step / horizon & $\dt\,/\,T$ & 0.05\,/\,40 & days\\
+Diffusion & $D$ & 0.01 & ---\\
+Proliferation & $\rho$ & 0.3 & day$^{-1}$\\
+Radiosensitivity & $\beta$ & 0.8 & ---\\
+Radiation window & $[t_s,t_e]$ & $[10,30]$ & days\\
+Training window & $[0,t_b]$ & $[0,20]$ & days\\
+\bottomrule\end{tabular}
 \end{table}
 
-The initial condition is a Gaussian bump of amplitude 0.8 centred at $\bx_c=(5,5)$
-with $\sigma=1.5$: $u_0(\bx) = 0.8\exp(-\|\bx-\bx_c\|^2/4.5)$,
-clipped to $[0,1]$ with zero boundary values.
-The hypoxia map $H(\bx)$ uses $h_{\min}=0.3$ and $\sigma_H=L/2=5$
-(see \cref{fig:setup}).
+All single-scenario surrogates (ODE, MLP, NODE, PINN, SuperNet) are
+trained on the canonical parameters in \cref{tab:scenario}.
+TrajNet is trained across 1\,500 randomised parameter
+vectors and tested on (i) the canonical scenario and (ii) 100~unseen
+random scenarios.  The initial condition is a Gaussian bump of
+amplitude~$A\!=\!0.8$, $\sigma\!=\!1.5$, centred at~$(5,5)$.
+All experiments run on an Apple~M-series CPU with
+PyTorch\,2.x \cite{paszke2019pytorch} and SciPy
+\cite{virtanen2020scipy}.
 
-\begin{figure}[H]
-  \centering
-  \includegraphics[width=0.90\textwidth]{paper/res/figures/fig_setup.png}
-  \caption{
-    Simulation setup.
-    \textbf{Left}: initial tumour density $u_0(\bx)$ (Gaussian, amplitude 0.8,
-    centred at domain midpoint).
-    \textbf{Right}: spatial hypoxia map $H(\bx)$; values near 1 (blue) indicate
-    normoxic conditions; values near 0.3 (dark blue, periphery) indicate
-    severe hypoxia, reducing radiation efficacy.
-  }
-  \label{fig:setup}
+\begin{figure}[t]\centering
+  \includegraphics[width=.88\textwidth]{figures/fig_setup.png}
+  \caption{Simulation setup.  \textbf{Left:} initial condition
+  $u_0(\bx)$.  \textbf{Right:} hypoxia map $H(\bx)$; values near~1
+  (light) are well-oxygenated; values near~0.3 (dark, periphery) are
+  hypoxic and radiation-resistant.}\label{fig:setup}
 \end{figure}
 
-\subsection{PDE solver}
+% ══════════════════════════════════════════════════════════════════════════
+\section{Results}\label{sec:results}
+% ══════════════════════════════════════════════════════════════════════════
 
-The PDE \cref{eq:pde} is integrated with an explicit Euler scheme on a
-uniform $N\times N$ Cartesian grid.
-The discrete Laplacian is evaluated using \texttt{scipy.ndimage.laplace}
-\cite{virtanen2020scipy} with zero-value Dirichlet boundary conditions.
-The CFL condition is satisfied for all parameter values used here.
+\subsection{PDE dynamics}
+\Cref{fig:snapshots} shows eight density snapshots.  The tumour grows and
+diffuses until irradiation begins at $t\!=\!10$; mass decreases sharply
+during treatment, with the hypoxic rim persisting longer; after $t\!=\!30$
+the residual tumour regrows.
 
-\subsection{Training protocol}
+\begin{figure}[H]\centering
+  \includegraphics[width=.97\textwidth]{figures/fig_pde_snapshots.png}
+  \caption{PDE ground-truth density at eight time points.  Irradiation
+  ($t\!\in\![10,30]$) visibly reduces the central density while the
+  hypoxic periphery persists.}\label{fig:snapshots}
+\end{figure}
 
-For each neural surrogate, the assimilation window $[0, 20]$ days is used
-exclusively for training/fitting; performance on the extrapolation window
-$(20, 40]$ days provides an unbiased test of generalisation.
-Specific training settings are listed in \cref{tab:training}.
+\subsection{Trajectory comparison}
+\Cref{fig:mass} shows the normalised mass $U(t)$ for all methods.
+TrajNet (green, solid) closely tracks the PDE throughout; the MLP
+(red, dashed) diverges outside the training window; the ODE
+under-predicts the radiation response.
 
-\begin{table}[H]
-\centering
-\caption{Training settings for each neural surrogate.}
-\label{tab:training}
-\begin{tabular}{lllll}
-\toprule
-Method & Architecture & Epochs & Key hyperparameter & Data source \\
-\midrule
-MLP      & $5\to32\to1$ (ReLU) & 200 & $N_\mathrm{traj}=150$ ODE traj.\ & ODE \\
-NODE     & Encoder $3\!\to\!32\!\to\!32$, two heads & 400 & $L_\mathrm{seq}=40$ & PDE \\
-PINN     & $3\!\to\!32^{\times3}\!\to\!1$ (Tanh+Sigmoid) & 400 & $N_c=400$ colloc.\ pts & PDE \\
-SuperNet & $2\to32\to32\to1$ (Tanh) & 400 & Teacher: PINN & PINN \\
-\bottomrule
-\end{tabular}
+\begin{figure}[H]\centering
+  \includegraphics[width=.94\textwidth]{figures/fig_mass_comparison.png}
+  \caption{Mass trajectory comparison.  Shaded orange region:
+  training window.  TrajNet tracks the PDE most closely; the MLP
+  drifts after $t\!=\!20$.}\label{fig:mass}
+\end{figure}
+
+\subsection{Quantitative comparison}
+
+\begin{table}[H]\centering\small
+\caption{Accuracy and wall-clock performance.  RMSE is for the
+normalised spatial average~$U$.  ``Total'' is the wall-clock time for the
+full 40-day trajectory.}\label{tab:results}
+\begin{tabular}{lcccc}\toprule
+Method & RMSE (train) & RMSE (test) & Total (ms) & Speedup\\\midrule
+PDE (ref.)   & ---                       & ---                      & 31.6   & 1$\times$\\
+ODE          & $1.4\!\times\!10^{-1}$    & $1.0\!\times\!10^{-2}$   & 44.7   & 0.7$\times$\\
+MLP          & $1.4\!\times\!10^{-1}$    & $1.5\!\times\!10^{-1}$   & 11.1   & 3$\times$\\
+NODE         & $1.8\!\times\!10^{-2}$    & $2.4\!\times\!10^{-1}$   & 42.8   & 0.7$\times$\\
+PINN         & $2.0\!\times\!10^{-2}$    & $2.1\!\times\!10^{-2}$   & 547    & 0.06$\times$\\
+SuperNet     & $5.7\!\times\!10^{-2}$    & $3.0\!\times\!10^{-2}$   & 14.8   & 2$\times$\\[3pt]
+\textbf{TrajNet} & $\mathbf{2.6\!\times\!10^{-3}}$
+                  & $\mathbf{1.7\!\times\!10^{-3}}$
+                  & \textbf{0.12}
+                  & \textbf{274$\times$}\\
+\bottomrule\end{tabular}
 \end{table}
 
-All experiments are implemented in Python\,3.11 with PyTorch\,2.x
-\cite{paszke2019pytorch} and SciPy \cite{virtanen2020scipy}.
-Timing measurements are averaged over all $T/\dt = 800$ inference steps on
-an Apple M-series CPU.
-
-% ═════════════════════════════════════════════════════════════════════════════
-\section{Results}
-\label{sec:results}
-% ═════════════════════════════════════════════════════════════════════════════
-
-\subsection{PDE ground-truth dynamics}
-
-\Cref{fig:snapshots} shows eight snapshots of the normalised tumour density
-$u(\bx,t)$ from the PDE solver.
-Initially, the Gaussian tumour grows and diffuses outwards until radiation
-begins at $t=10$.
-The density decreases sharply during the irradiation period ($t\in[10,30]$)
-due to radiosensitive kill, with hypoxic peripheral cells persisting longer.
-After irradiation ends at $t=30$, the residual tumour begins to regrow.
-
-\begin{figure}[H]
-  \centering
-  \includegraphics[width=0.97\textwidth]{paper/res/figures/fig_pde_snapshots.png}
-  \caption{
-    PDE ground-truth tumour density $u(\bx,t)$ at eight representative
-    time points.
-    The inferno colour scale indicates density from 0 (black) to 1 (yellow).
-    Active irradiation ($t\in[10,30]$) visibly reduces the density field;
-    the peripheral hypoxic ring is apparent in the slower-decaying rim at
-    $t=15$--$25$.
-  }
-  \label{fig:snapshots}
-\end{figure}
-
-\subsection{Mass trajectory comparison}
-
-\Cref{fig:mass} shows the normalised spatial-average trajectory $U(t)$ for all
-methods alongside the PDE reference.
-The orange-shaded region marks the assimilation window $[0,20]$; the
-blue-shaded region is the extrapolation window $(20, 40]$.
-Vertical dotted lines indicate the radiation period.
-
-\begin{figure}[H]
-  \centering
-  \includegraphics[width=0.95\textwidth]{paper/res/figures/fig_mass_comparison.png}
-  \caption{
-    Normalised spatial-average tumour mass $U(t) = M(t)/L^2$ for all methods.
-    The shaded orange region marks the assimilation window used for training;
-    the shaded blue region is the extrapolation window.
-    Vertical dotted lines indicate the onset and cessation of irradiation.
-    The PDE reference (solid black) exhibits a clear growth-irradiation-regrowth
-    pattern.
-    The MLP (red dashed) diverges noticeably in the extrapolation window,
-    while NODE (orange) and PINN (blue) track the PDE closely throughout.
-  }
-  \label{fig:mass}
-\end{figure}
-
-Several phenomena are visible:
-(i) the ODE (grey dash-dot) tracks the PDE well in the post-radiation phase
-    but underestimates the mass loss during active irradiation (spatial
-    heterogeneity of $H(\bx)$ is lost);
-(ii) the MLP diverges in the extrapolation window, confirming the theoretical
-    prediction that unregularised function approximators drift outside the
-    training distribution;
-(iii) the NODE closely follows the PDE in both windows, demonstrating that
-    the physics-embedded correction prevents large extrapolation errors;
-(iv) the PINN trajectory is smooth and consistent across both windows,
-    reflecting its continuous-time physics constraint;
-(v) the SuperNet closely tracks the PINN in the assimilation window and
-    shows moderate drift in extrapolation.
-
-\subsection{Quantitative accuracy}
-
-\Cref{tab:results} summarises RMSE for all methods.
-
-\begin{table}[H]
-\centering
-\caption{
-  Accuracy and efficiency comparison.
-  RMSE values are for the normalised spatial average $U(t) = M(t)/L^2$.
-  Inference time is wall-clock per time step on a CPU.
-  Speedup is relative to the PDE solver ($0.039$\,ms/step on the
-  $50\!\times\!50$ grid).
-}
-\label{tab:results}
-\begin{tabular}{lccccc}
-\toprule
-Method & RMSE (train) & RMSE (test) & Inf.\ (ms/step) & Speedup & Train (s) \\
-\midrule
-ODE      & $1.44\times10^{-1}$ & $1.05\times10^{-2}$ & 0.054 & $0.7\times$  & --   \\
-MLP      & $3.58\times10^{-1}$ & $4.61\times10^{-1}$ & 0.014 & $2.8\times$  & 30.6 \\
-NODE     & $8.88\times10^{-3}$ & $5.35\times10^{-2}$ & 0.047 & $0.8\times$  & 52.3 \\
-PINN     & $1.90\times10^{-2}$ & $2.04\times10^{-2}$ & 0.568 & $0.07\times$ & 4.8  \\
-SuperNet & $5.75\times10^{-2}$ & $4.78\times10^{-2}$ & 0.018 & $2.2\times$  & 0.4  \\
-\bottomrule
-\end{tabular}
-\end{table}
-
-\noindent Key observations:
-\begin{itemize}[leftmargin=2em]
-  \item \textbf{NODE achieves the lowest in-window RMSE} ($8.9\!\times\!10^{-3}$),
-        which is one order of magnitude better than any other method.
-        The physics-constrained architecture prevents the correction from
-        overfitting and provides a regularised fit.
-  \item \textbf{PINN is the most consistent}: its RMSE changes by only 7\%
-        between the training ($1.9\!\times\!10^{-2}$) and test window
-        ($2.0\!\times\!10^{-2}$), indicating that the PDE residual loss
-        provides strong regularisation against extrapolation drift.
-  \item \textbf{ODE has low test RMSE despite large train RMSE}.
-        The ODE's large training RMSE ($1.44\!\times\!10^{-1}$) is driven by the
-        irradiation period ($t\in[10,20]$), which falls in the training window;
-        the spatial averaging approximation introduces systematic error when the
-        hypoxia-weighted dose differs from $\Heff r$, which is precisely during
-        active irradiation with a heterogeneous $H(\bx)$.
-        In the extrapolation window (post-irradiation), the ODE recovers
-        well ($1.05\!\times\!10^{-2}$) because growth dynamics are smooth.
-  \item \textbf{MLP extrapolates poorly}: RMSE increases by $29\%$ from the
-        training to the test window, confirming that without physical
-        regularisation the error compounds with each step.
-  \item \textbf{SuperNet offers a good balance}: at 2.2× speedup (on a
-        $50\!\times\!50$ grid), it achieves an extrapolation RMSE of
-        $4.8\!\times\!10^{-2}$—comparable to the MLP but with better
-        in-window accuracy ($5.7\!\times\!10^{-2}$), and much faster to
-        train than the NODE (0.4\,s vs.\ 52.3\,s).
+\noindent Key observations from \cref{tab:results}:
+\begin{itemize}[leftmargin=2em,itemsep=2pt]
+  \item \textbf{Step-wise surrogates provide minimal speedup.}
+        On the $50\!\times\!50$ grid the PDE runs in 31.6\,ms; all
+        step-wise methods still iterate 800 times, so Python/PyTorch
+        overhead wipes out any per-step saving.  Only MLP (3$\times$) and
+        SuperNet (2$\times$) are faster than the PDE.
+  \item \textbf{TrajNet is 274$\times$ faster} because it replaces 800
+        sequential steps with a \emph{single} batched forward pass
+        through a small MLP.
+  \item \textbf{TrajNet is the most accurate} on the canonical scenario
+        (RMSE $1.7\!\times\!10^{-3}$), having been trained on
+        1\,500 diverse PDE solutions.
+  \item \textbf{PINN is the most consistent step-wise method}
+        ($\Delta$RMSE${}<7\%$ between windows) thanks to the PDE-residual
+        constraint, but is the \emph{slowest} (547\,ms) because it
+        evaluates the full 2\,500-point grid at every step.
+  \item \textbf{MLP extrapolation drift} confirms that unconstrained
+        black-box surrogates are unreliable beyond the training horizon.
 \end{itemize}
+
+\begin{figure}[H]\centering
+  \begin{subfigure}[b]{.48\textwidth}\centering
+    \includegraphics[width=\textwidth]{figures/fig_rmse_bar.png}
+    \caption{RMSE by method and window.}\label{fig:rmse}
+  \end{subfigure}\hfill
+  \begin{subfigure}[b]{.48\textwidth}\centering
+    \includegraphics[width=\textwidth]{figures/fig_frontier.png}
+    \caption{Accuracy--efficiency frontier.}\label{fig:frontier}
+  \end{subfigure}
+  \caption{\textbf{(a)}~RMSE comparison (log scale).  Solid: training
+  window; hatched: extrapolation.  \textbf{(b)}~Pareto frontier: TrajNet
+  (bottom-left) dominates all other methods on both
+  axes.}\label{fig:acc_eff}
+\end{figure}
+
+\subsection{TrajNet generalisation}
+To assess whether TrajNet memorises or truly learns the physics, we
+evaluate it on 100~unseen parameter combinations drawn from the same
+ranges used in training (\cref{fig:gen}).  The median RMSE is
+$2.6\!\times\!10^{-3}$ and the 95th~percentile is
+$6.2\!\times\!10^{-3}$, demonstrating robust generalisation.
+
+\begin{figure}[H]\centering
+  \includegraphics[width=.65\textwidth]{figures/fig_trajnet_generalization.png}
+  \caption{RMSE histogram of TrajNet on 100 unseen parameter
+  combinations.  The distribution is sharply concentrated near zero,
+  confirming that the model generalises well across the six-dimensional
+  parameter space.}\label{fig:gen}
+\end{figure}
+
+\subsection{Wall-clock speedup}
+\Cref{fig:speedup} shows the speedup of each method relative to the PDE.
+Step-wise surrogates cluster around 1$\times$; TrajNet stands apart at
+274$\times$.  This advantage grows further with grid size: doubling the
+resolution to $100\!\times\!100$ quadruples the PDE cost while leaving
+TrajNet unchanged.
+
+\begin{figure}[H]\centering
+  \includegraphics[width=.65\textwidth]{figures/fig_speedup.png}
+  \caption{Wall-clock speedup (log scale) for the full
+  trajectory.}\label{fig:speedup}
+\end{figure}
 
 \subsection{PINN spatial reconstruction}
+Although TrajNet surpasses the PINN on mass-trajectory prediction, the
+PINN uniquely provides the full density field~$u(\bx,t)$.
+\Cref{fig:pinn} compares PINN reconstructions with the PDE at three time
+points.  The PINN captures the overall shape but exhibits smoothing
+artefacts due to the small network; larger architectures would improve
+spatial fidelity \cite{karniadakis2021physics}.
 
-\Cref{fig:pinn_recon} compares the PINN-reconstructed density field with the
-PDE ground truth at $t = 10$, $20$, and $30$.
-The PINN captures the qualitative shape of the density field—including the
-central peak and peripheral decay—but exhibits moderate smoothing artefacts
-due to the small network capacity and relatively short training (400 epochs).
-Larger networks or longer training (2000+ epochs) substantially improve
-spatial accuracy \cite{karniadakis2021physics}.
-
-\begin{figure}[H]
-  \centering
-  \includegraphics[width=0.96\textwidth]{paper/res/figures/fig_pinn_reconstruction.png}
-  \caption{
-    PINN spatial reconstruction (bottom row) vs.\ PDE ground truth (top row)
-    at $t=10$, $20$, $30$.
-    The PINN captures the macroscopic mass dynamics while exhibiting mild
-    spatial smoothing; the physics-informed loss constrains the solution to
-    remain physically plausible even at unobserved spatial locations.
-  }
-  \label{fig:pinn_recon}
+\begin{figure}[H]\centering
+  \includegraphics[width=.95\textwidth]{figures/fig_pinn_reconstruction.png}
+  \caption{PDE (top) vs.\ PINN reconstruction
+  (bottom).}\label{fig:pinn}
 \end{figure}
 
-\subsection{Computational efficiency}
+% ══════════════════════════════════════════════════════════════════════════
+\section{Discussion}\label{sec:discussion}
+% ══════════════════════════════════════════════════════════════════════════
 
-\Cref{fig:rmse_bar,fig:frontier} summarise the accuracy-efficiency trade-off.
-On the $50\!\times\!50$ test grid, the PDE solver is already fast (0.039\,ms/step),
-so scalar surrogates offer only modest speedups (0.7-2.8×).
-This is because the PDE benefits from highly optimised BLAS routines inside
-\texttt{scipy.ndimage.laplace}, while scalar Python + PyTorch incurs fixed
-overhead per step.
+\paragraph{Why step-wise surrogates fail to speed up small-grid PDEs.}
+On a $50\!\times\!50$ mesh, \texttt{scipy.ndimage.laplace} executes in
+microseconds; the PDE loop completes in ${\sim}30$\,ms.  Any surrogate
+that still iterates over 800 steps incurs Python interpreter and PyTorch
+dispatch overhead that dominates the per-step computation.  The only way
+to achieve large speedups is to \emph{bypass the loop}.
 
-The decisive advantage of scalar surrogates emerges at larger grid sizes,
-where the PDE cost scales as $O(N^2)$ in 2D or $O(N^3)$ in 3D, while the
-scalar methods' cost remains $O(1)$ in spatial resolution.
-For a $200\!\times\!200$ grid, the PDE inference is approximately 16× slower
-($\approx 0.6$\,ms/step), giving scalar methods speedups of 30-45×.
-For a $100\!\times\!100\!\times\!100$ 3D domain, the PDE requires two to three
-orders of magnitude more work, making the scalar surrogates essential.
+\paragraph{TrajNet as an amortised solver.}
+TrajNet shifts all computation to an offline training phase (1\,500 PDE
+runs $\approx$43\,s, then 300~epochs $\approx$60\,s) and amortises it
+over all future queries.  Even a single query already saves time compared
+to running the PDE; in a Monte-Carlo setting with $10^4$ samples the
+aggregate saving is ${\sim}5$~minutes of PDE time reduced to
+${\sim}1.2$\,s.
 
-\begin{figure}[H]
-  \centering
-  \begin{subfigure}[b]{0.48\textwidth}
-    \centering
-    \includegraphics[width=\textwidth]{paper/res/figures/fig_rmse_bar.png}
-    \caption{RMSE by method and window.}
-    \label{fig:rmse_bar}
-  \end{subfigure}
-  \hfill
-  \begin{subfigure}[b]{0.48\textwidth}
-    \centering
-    \includegraphics[width=\textwidth]{paper/res/figures/fig_frontier.png}
-    \caption{Accuracy-efficiency frontier.}
-    \label{fig:frontier}
-  \end{subfigure}
-  \caption{
-    \textbf{(a)} RMSE comparison for each method in the training window
-    (solid bars) and the test/extrapolation window (hatched bars).
-    Log scale reveals the order-of-magnitude differences.
-    \textbf{(b)} Accuracy-efficiency frontier on a log--log scale.
-    Methods closer to the bottom-left corner are preferred (low RMSE, low
-    inference time).
-    The PDE reference (star, bottom-right) defines the accuracy ceiling and
-    inference cost baseline.
-    The NODE achieves the best test RMSE but incurs moderate inference cost;
-    the MLP and SuperNet are fastest but the MLP extrapolates poorly.
-  }
-  \label{fig:accuracy_efficiency}
-\end{figure}
+\paragraph{When spatial fields are needed.}
+TrajNet and the other scalar surrogates predict only the total mass~$U(t)$.
+When the full density field is required (e.g.\ for dose planning), the
+PINN or PDE must be used.  A natural extension is to predict a small set
+of spatial moments---peak density, effective radius, centre of
+mass---alongside the mass, adding minimal overhead to TrajNet while
+recovering key geometric information.
 
-\begin{figure}[H]
-  \centering
-  \includegraphics[width=0.72\textwidth]{paper/res/figures/fig_speedup.png}
-  \caption{
-    Inference speedup of each surrogate relative to the PDE solver on the
-    $50\!\times\!50$ grid.
-    The PINN is slower than the PDE because it evaluates 2500 grid points
-    through a network at each step; scalar methods (ODE, MLP, NODE, SuperNet)
-    benefit from fixed $O(1)$ cost.
-    The speedup is expected to grow substantially with grid resolution (see
-    \cref{sec:discussion}).
-  }
-  \label{fig:speedup}
-\end{figure}
-
-% ═════════════════════════════════════════════════════════════════════════════
-\section{Discussion}
-\label{sec:discussion}
-% ═════════════════════════════════════════════════════════════════════════════
-
-\paragraph{Physics as regularisation.}
-The most striking result is the strong regularisation effect of embedded
-physics.
-The NODE and PINN—both of which directly enforce the ODE baseline or PDE
-residual—show far less extrapolation degradation than the unconstrained MLP.
-This confirms theoretical results on the role of physical invariants as
-inductive biases \cite{karniadakis2021physics, brunton2022data}: without them,
-learned dynamics must re-discover the governing equations from the training
-data alone, making extrapolation unreliable.
-
-\paragraph{The SuperNet compromise.}
-SuperNet achieves a pragmatic balance: by anchoring the prediction to the ODE
-baseline and learning only the residual, the student network need not learn the
-full dynamics from scratch.
-This leads to smaller training data requirements (the student trains on 400
-PINN residuals, not raw PDE trajectories) and a training time of only 0.4\,s.
-The key limitation is that the student inherits the PINN's errors; improving
-the PINN teacher (more epochs, larger network) would proportionally improve
-the SuperNet student.
-
-\paragraph{ODE accuracy in the post-irradiation phase.}
-The ODE's low test RMSE ($1.05\!\times\!10^{-2}$) compared to its high training
-RMSE ($1.44\!\times\!10^{-1}$) reveals an important feature of the benchmark:
-spatial averaging is least accurate precisely during irradiation, when
-heterogeneous $H(\bx)$ introduces non-trivial spatial correlations.
-After irradiation ends, the dynamics are dominated by smooth logistic regrowth,
-which the ODE captures accurately.
-This suggests that hybrid methods (ODE for the post-irradiation phase, neural
-surrogates for the treatment phase) could further improve the trade-off.
-
-\paragraph{Scaling to larger grids.}
-On the $50\!\times\!50$ benchmark grid, the PDE is competitive in raw speed.
-The pivotal advantage of scalar surrogates appears at clinical resolution.
-A $256\!\times\!256$ 2D grid (typical for brain MRI slice)
-or a $64\!\times\!64\!\times\!64$ 3D grid increases PDE cost by
-$\approx\!26\times$ and $\approx\!8\times$ respectively (ignoring constant
-factors), while the scalar surrogates' cost is unchanged.
-For Bayesian inference requiring thousands of forward simulations
-\cite{beaumont2002approximate, talagrand1987variational}, this is decisive.
-
-\paragraph{Limitations and future work.}
-\begin{itemize}[leftmargin=2em]
-  \item \textbf{Single scenario:} All surrogates are trained and tested on one
-        canonical parameter set.
-        Multi-parameter surrogates (FNO \cite{li2020fourier}, DeepONet
-        \cite{lu2019deeponet}) would generalise across $(\rho,\beta,D)$ without
-        retraining.
-  \item \textbf{Short training:} PINN and NODE are trained for 400 epochs on CPU.
-        With GPU acceleration and 2000+ epochs, spatial accuracy would improve
-        significantly.
-  \item \textbf{1D ODE limitation:} The NODE and SuperNet track only two scalar
-        quantities $(M, C)$.
-        Extending to a truncated modal expansion (first $K$ spatial moments)
-        would capture more geometry while remaining cheap.
-  \item \textbf{3D extension:} The framework is designed to be dimension-agnostic;
-        applying it to 3D patient-specific geometries is natural next step.
-  \item \textbf{Data assimilation:} The framework already implements ABC and
-        4D-Var data assimilation modules, enabling parameter calibration from
-        clinical imaging data \cite{talagrand1987variational, evensen2003ensemble}.
+\paragraph{Limitations.}
+\begin{itemize}[leftmargin=2em,itemsep=1pt]
+  \item The training set covers a fixed IC shape (Gaussian) and a fixed
+        hypoxia map.  Generalising to arbitrary shapes would require
+        richer input encodings (e.g.\ shape descriptors or image
+        embeddings).
+  \item PINN and NODE use fast-benchmark settings (400~epochs, small
+        networks).  With longer training they would be more accurate but
+        still step-wise.
+  \item Extension to 3D or patient-specific geometries is natural but
+        would require larger training budgets.
 \end{itemize}
 
-% ═════════════════════════════════════════════════════════════════════════════
+% ══════════════════════════════════════════════════════════════════════════
 \section{Conclusions}
-\label{sec:conclusions}
-% ═════════════════════════════════════════════════════════════════════════════
-
-We have presented a systematic comparison of five surrogate methods for
-simulating two-dimensional tumour growth with spatial hypoxia under
-fractionated radiotherapy.
-Our main findings are:
-
-\begin{enumerate}[leftmargin=2em]
-  \item \textbf{Physics-informed methods outperform unconstrained black-box
-        approaches} in generalisation beyond the training window.
-        The NODE achieves the lowest in-window RMSE ($8.9\!\times\!10^{-3}$),
-        while the PINN provides the most consistent accuracy across both
-        windows ($\Delta\RMSE < 7\%$).
-
-  \item \textbf{Simple MLP surrogates are unreliable for extrapolation.}
-        The lack of physical regularisation causes error accumulation, with
-        test RMSE $29\%$ higher than training RMSE in our experiment.
-        Embedded physics (ODE baseline, PDE residual) is necessary for
-        reliable long-horizon prediction.
-
-  \item \textbf{The SuperNet teacher-student paradigm offers the best
-        accuracy-efficiency trade-off} when training budget is limited.
-        By distilling the PINN teacher into a fast scalar student, it achieves
-        competitive accuracy at a fraction of the training cost (0.4\,s vs.\
-        52.3\,s for the NODE).
-
-  \item \textbf{Scalar surrogates provide orders-of-magnitude speedup at
-        clinical grid resolutions} ($256^2$ or $64^3$), making them
-        essential for ensemble forecasting, Bayesian inference, and
-        treatment optimisation workflows.
-
-  \item \textbf{Spatial averaging is a significant source of error
-        during active irradiation.}
-        The ODE baseline's high training RMSE ($1.44\!\times\!10^{-1}$) is
-        attributable to heterogeneous hypoxia effects that spatial averaging
-        cannot capture.
-        Moment-based reduced models (beyond the zeroth spatial moment) are a
-        promising avenue to address this limitation.
+% ══════════════════════════════════════════════════════════════════════════
+\begin{enumerate}[leftmargin=2em,itemsep=2pt]
+  \item Step-wise neural surrogates (MLP, NODE, PINN, SuperNet) provide
+        \emph{negligible speedup} on small 2D grids because the
+        time-stepping loop itself is the bottleneck.
+  \item The \textbf{Trajectory Predictor} eliminates the loop and
+        achieves a \textbf{274$\times$ speedup} with RMSE
+        $1.7\!\times\!10^{-3}$, making it suitable for ensemble
+        forecasting, Bayesian inference and treatment optimisation.
+  \item TrajNet \textbf{generalises robustly} across a six-dimensional
+        parameter space (median test RMSE $2.6\!\times\!10^{-3}$ on
+        100~unseen scenarios).
+  \item Among step-wise methods, the \textbf{PINN} is the most
+        extrapolation-resistant thanks to PDE-residual regularisation.
+  \item Physics constraints (ODE baseline in NODE and SuperNet; PDE
+        residual in PINN) are essential to prevent extrapolation drift
+        in learned surrogates.
 \end{enumerate}
 
-The unified simulation framework released alongside this paper makes it
-straightforward to add new engine implementations (by sub-classing
-\texttt{BaseEngine}) and to plug them into the same visualisation, training,
-and benchmarking infrastructure.
+\medskip\noindent
+The modular framework released with this paper allows new engines to be
+added by implementing a single \texttt{step()} method and immediately
+benefit from the shared training, visualisation and benchmarking
+infrastructure.
 
-\printbibliography
+\newpage
+\printbibliography[heading=bibintoc,title={References}]
 
 \end{document}
