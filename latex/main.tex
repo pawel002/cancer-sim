@@ -18,9 +18,10 @@
 \usepackage{enumitem}
 \usepackage{setspace}
 \usepackage{fancyhdr}
+\usepackage{csquotes}
 
 \usepackage[style=numeric, sorting=none, maxbibnames=4]{biblatex}
-\addbibresource{refs.bib}
+\addbibresource{references.bib}
 
 \hypersetup{colorlinks=true, linkcolor=black!60!blue,
             citecolor=black!60!blue, urlcolor=black!60!blue}
@@ -40,8 +41,8 @@
 \begin{document}
 
 % ── title ─────────────────────────────────────────────────────────────────
-\title{\Large\textbf{Performance-Efficient Surrogates for Simulating\\
-       Cancer Growth with Hypoxia}}
+\title{\Large\textbf{Performance-Efficient Surrogate for Simulating\\
+       Cancer Growth with Hypoxia - TrajNet}}
 \author{
   Pawe\l{} Jarosz \quad Igor Zakrocki\\[4pt]
   \small Department of Computer Science, AGH University of Krakow}
@@ -69,47 +70,32 @@ All code, trained models and figure-generation scripts are released as
 open source.
 \end{abstract}
 
-\tableofcontents\newpage
-
 % ══════════════════════════════════════════════════════════════════════════
 \section{Introduction}
-% ══════════════════════════════════════════════════════════════════════════
-Solid tumours develop hypoxic (oxygen-deprived) regions as they outgrow
-their vasculature \cite{vaupel2004hypoxia,tannock1972relation}.  Because
-hypoxic cells are two to three times less radiosensitive than
-well-oxygenated cells \cite{hall2006radiobiology}, hypoxia is a major
-mechanism of resistance to radiotherapy.  Accurate mathematical modelling
+Solid tumours develop hypoxic (oxygen-deprived) regions as they outgrow their vasculature \cite{vaupel2004hypoxia,tannock1972relation}. Because hypoxic cells are two to three times less radiosensitive than well-oxygenated cells \cite{hall2006radiobiology}, hypoxia is a major mechanism of resistance to radiotherapy.  Accurate mathematical modelling
 of tumour growth and treatment response is therefore essential for
 protocol optimisation \cite{altrock2015mathematics,cristini2010multiscale}.
-
 The standard approach couples logistic proliferation, Fickian diffusion
 and a radiation-kill term into a reaction-diffusion PDE
 \cite{murray2002mathematical,swanson2000quantitative}.  Integrating this
 PDE on a fine mesh over clinically relevant horizons (days to months)
 is expensive; the cost becomes prohibitive when thousands of evaluations
-are needed---as in Bayesian inference, sensitivity analysis or
+are needed, as in Bayesian inference, sensitivity analysis or
 digital-twin calibration
-\cite{beaumont2002approximate,morris1991factorial,talagrand1987variational}.
-
-Surrogate modelling replaces the PDE solver with a cheaper approximation.
+\cite{beaumont2002approximate,morris1991factorial,talagrand1987variational}. Surrogate modelling replaces the PDE solver with a cheaper approximation.
 Classical options include spatially-averaged ODEs, which are fast but
 discard all spatial information \cite{tracqui2009biophysical}.  Recent
-machine-learning methods---MLP time-steppers \cite{lagaris1998artificial},
+machine-learning methods, like MLP time-steppers \cite{lagaris1998artificial},
 Neural ODEs \cite{chen2018neural}, PINNs
-\cite{raissi2019physics,karniadakis2021physics} and teacher--student
-distillation \cite{hinton2015distilling}---offer accuracy improvements but
-typically still operate step-by-step and thus inherit much of the PDE's
-overhead.
+\cite{raissi2019physics,karniadakis2021physics} and teacher-student
+distillation \cite{hinton2015distilling}, offer accuracy improvements but typically still operate step-by-step and thus inherit much of the PDE's overhead.
 
-\paragraph{Key observation.}
 On a well-optimised $50\!\times\!50$ grid the PDE itself runs in
-${\sim}30$\,ms, so step-wise neural surrogates provide \emph{no
-meaningful speedup} (0.7--3$\times$ in our experiments).  The decisive
+${\sim}30$\,ms (on a MacBook Pro M1 CPU, using Python and Numpy), so step-wise neural surrogates provide \emph{no
+meaningful speedup} (from $0.7$ to 3$\times$ in our experiments).  The decisive
 gain comes from \emph{eliminating the time-stepping loop entirely}: a
 conditional network trained across many PDE runs predicts the full
-trajectory in a single batched forward pass.
-
-\paragraph{Contributions.}
+trajectory in a single batched forward pass. Our contributions:
 \begin{enumerate}[leftmargin=2em,itemsep=2pt]
   \item We implement six surrogates in a unified framework and show that
         step-wise methods offer negligible speedup on small grids.
@@ -120,145 +106,67 @@ trajectory in a single batched forward pass.
   \item We demonstrate that TrajNet generalises across unseen parameter
         combinations (median RMSE $2.6\!\times\!10^{-3}$ over 100 random
         test scenarios).
-  \item We release all code, models and reproducible figure generation.
 \end{enumerate}
-
-% ══════════════════════════════════════════════════════════════════════════
-\section{Related Work}
-% ══════════════════════════════════════════════════════════════════════════
-Reaction-diffusion PDEs of Fisher--KPP type model glioma invasion
-\cite{swanson2000quantitative,murray2002mathematical,tracqui2009biophysical};
-multiscale extensions are reviewed in \cite{cristini2010multiscale}.
-Neural ODEs \cite{chen2018neural,rubanova2019latent} parameterise the
-vector field with a network; PINNs \cite{raissi2019physics} minimise the
-PDE residual at collocation points.  Karniadakis et al.\
-\cite{karniadakis2021physics} and Brunton \& Kutz
-\cite{brunton2022data} survey the broader scientific-ML landscape.
-Operator-learning methods---FNO \cite{li2020fourier} and DeepONet
-\cite{lu2019deeponet}---learn solution maps but require richer training
-data; they are a natural extension left for future work.  In the
-cancer-modelling domain, Lima et al.\ \cite{lima2021bayesian} use
-Gaussian-process surrogates; Yin et al.\ \cite{yin2021non} combine data
-assimilation with MRI.  Our TrajNet is most closely related to the
-DeepONet paradigm (branch encodes parameters, trunk encodes time) but
-uses a simpler concatenation architecture that is easy to train on CPU.
 
 % ══════════════════════════════════════════════════════════════════════════
 \section{Problem Formulation}\label{sec:problem}
 % ══════════════════════════════════════════════════════════════════════════
 
-\subsection{PDE ground-truth model}
-Let $\Omega=[0,L]^2$, $u(\bx,t)\in[0,1]$ the normalised cell density,
-$K\!=\!1$.  The governing equation is
+Let's define our 2D problem domain to be $\Omega=[0,L]^2$ and a normalized cancer cell density function as $u(\bx, t) \in[0,1]$, where $\bx \in \Omega$ and $t \in \mathbb{R}^+$ represents spatial and temporal dimensions accordingly. The equation describing the evolution of cells on the domain can be described using the following PDE equation:
 \begin{equation}\label{eq:pde}
-  \partial_t u = D\nabla^2 u + \rho\,u(1-u) - \beta\,R(\bx,t)\,H(\bx)\,u,
-  \qquad u\big|_{\partial\Omega}=0,
+    \partial_t u = D\nabla^2 u + \rho u(1-u) - \beta R(\bx, t) H(\bx) u, \qquad u\big|_{\partial\Omega} = 0,
 \end{equation}
-with diffusion coefficient~$D$, proliferation rate~$\rho$,
-radiosensitivity~$\beta$, dose field $R(\bx,t)=r(t)\,W(\bx)$ (temporal
-schedule $\times$ beam mask, here $W\!\equiv\!1$), and hypoxia map
-$H(\bx)\in(0,1]$:
+with diffusion coefficient $D$, proliferation rate $\rho$, radiosensitivity $\beta$, dose field $R(\bx,t)=r(t)\,W(\bx)$ (temporal schedule $\times$ beam mask, here $W\!\equiv\!1$), and hypoxia map $H(\bx)\in(0,1]$:
 \begin{equation}
-  H(\bx) = 0.3 + 0.7\,\exp\!\bigl(-\|\bx-\bx_c\|^2/\sigma_H^2\bigr).
+    H(\bx) = 0.3 + 0.7 \exp \bigl(-\|\bx-\bx_c\|^2/\sigma_H^2\bigr).
 \end{equation}
-
-\subsection{ODE surrogate}
-Averaging \cref{eq:pde} over~$\Omega$ with Dirichlet BCs yields the
-scalar spatial average $U(t)=L^{-2}\!\int_\Omega u\,d\bx$:
+The ODE surrogate can be obtained by averaging \cref{eq:pde} over $\Omega$ with Dirichlet BCs, yielding the scalar spatial average $U(t)=L^{-2}\!\int_\Omega u\,d\bx$:
 \begin{equation}\label{eq:ode}
   \dot U = \rho\,U(1-U) - \beta\,\Heff\,r(t)\,U,
   \qquad \Heff = L^{-2}\!\textstyle\int_\Omega H\,d\bx.
 \end{equation}
-
-\subsection{Evaluation protocol}
-We split $[0,T]$ into an \textbf{assimilation window} $[0,t_b]$ (used for
-training/fitting) and an \textbf{extrapolation window} $(t_b,T]$.
-Accuracy is measured by
+By splitting $[0,T]$ into an \textbf{assimilation window} $[0,t_b]$ (used for training/fitting) and an \textbf{extrapolation window} $(t_b,T]$, Accuracy can be measured as
 \begin{equation}\label{eq:rmse}
-  \mathrm{RMSE}(\hat U,U_\mathrm{PDE};\mathcal{T})
-  = \sqrt{|\mathcal{T}|^{-1}\textstyle\sum_{t_i\in\mathcal{T}}
+    \mathrm{RMSE}(\hat U,U_\mathrm{PDE};\mathcal{T}) = \sqrt{|\mathcal{T}|^{-1}\textstyle\sum_{t_i\in\mathcal{T}}
     (\hat U_i - U_i^\mathrm{PDE})^2}.
 \end{equation}
 
 % ══════════════════════════════════════════════════════════════════════════
 \section{Surrogate Methods}\label{sec:methods}
-% ══════════════════════════════════════════════════════════════════════════
 
-\subsection{Step-wise surrogates (baselines)}
+To achieve a set of existing methods, which we can compare our implementations to, we decided to implement these existing methods to our problem. 
 
-\paragraph{MLP time-stepper.}
-A two-layer MLP $F_\theta:(U_n,r_n,\dt,\rho,\beta)\mapsto U_{n+1}$
-(32~hidden units, ReLU) trained on 150 randomised ODE trajectories via
-MSE \cite{hornik1989multilayer,lagaris1998artificial}.
+\begin{enumerate}
+    \item \textbf{MLP time-stepper.} A two-layer MLP $F_\theta:(U_n,r_n,\dt,\rho,\beta)\mapsto U_{n+1}$ (32 hidden units, ReLU) trained on 150 randomised ODE trajectories via MSE \cite{hornik1989multilayer,lagaris1998artificial}.
 
-\paragraph{Neural ODE (NODE).}
-Extends the ODE with a learned correction
-$\dot M = \fode(M,r) + \mathrm{NN}(M,C,r)$ and tracks the
-centre-of-mass~$C$ \cite{chen2018neural}.  The physics baseline
-$\fode$ from \cref{eq:ode} regularises extrapolation.
+    \item \textbf{Neural ODE (NODE).}Extends the ODE with a learned correction $\dot M = \fode(M,r) + \mathrm{NN}(M,C,r)$ and tracks the centre-of-mass~$C$ \cite{chen2018neural}. The physics baseline $\fode$ from \cref{eq:ode} regularises extrapolation.
 
-\paragraph{PINN.}
-A 3-layer MLP $u_\theta(t,x_1,x_2)$ (Tanh$+$Sigmoid) trained to
-minimise $w_\mathrm{pde}\mathcal{L}_\mathrm{pde}+
-w_\mathrm{ic}\mathcal{L}_\mathrm{ic}+
-w_\mathrm{bc}\mathcal{L}_\mathrm{bc}+
-w_\mathrm{data}\mathcal{L}_\mathrm{data}$, where the PDE
-residual~$\mathcal{L}_\mathrm{pde}$ is evaluated via automatic
-differentiation on random collocation points
-\cite{raissi2019physics,lu2021deepxde}.
+    \item \textbf{Physics Informed Neural Network (PINN).} A 3-layer MLP $u_\theta(t,x_1,x_2)$ (Tanh and Sigmoid) trained to minimise $w_\mathrm{pde}\mathcal{L}_\mathrm{pde}+w_\mathrm{ic}\mathcal{L}_\mathrm{ic}+w_\mathrm{bc}\mathcal{L}_\mathrm{bc}+w_\mathrm{data}\mathcal{L}_\mathrm{data}$, where the PDE residual $\mathcal{L}_\mathrm{pde}$ is evaluated via automatic differentiation on random collocation points \cite{raissi2019physics,lu2021deepxde}.
 
-\paragraph{SuperNet.}
-Distils PINN knowledge into a fast ODE correction: $U_{n+1}=U_n+\dt
-[\fode(U_n,r_n)+g_\phi(U_n,r_n)]$, where $g_\phi$ is a 2-layer MLP
-trained on PINN-derived residuals \cite{hinton2015distilling}.
-
-\medskip
-All four baselines run \emph{step-by-step}: they advance the state by
-one~$\dt$ per call, repeating for all $T/\dt$ steps.  As we show in
-\cref{sec:results}, this loop overhead limits their practical speedup on
-small grids.
+    \item \textbf{SuperNet.} Distils PINN knowledge into a fast ODE correction: $U_{n+1}=U_n+\dt [\fode(U_n,r_n)+g_\phi(U_n,r_n)]$, where $g_\phi$ is a 2-layer MLP trained on PINN-derived residuals \cite{hinton2015distilling}.
+    
+\end{enumerate}
+All four baselines run \emph{step-by-step}: they advance the state by one $\dt$ per call, repeating for all $T/\dt$ steps. As we show in \cref{sec:results}, this loop overhead limits their practical speedup on small grids.
 
 \subsection{Trajectory Predictor (TrajNet)}\label{sec:trajnet}
 
-We propose a fundamentally different approach: train a single network
-across many PDE simulations so that at inference time the \emph{entire}
-trajectory is obtained in one batched forward pass.
-
-\paragraph{Architecture.}
-The surrogate is a conditional function
+We propose a fundamentally different approach: train a single network across many PDE simulations so that at inference time the \emph{entire} trajectory is obtained in one batched forward pass. The surrogate is a conditional function
 \begin{equation}\label{eq:trajnet}
   f_\theta : (\rho,\,\beta,\,D,\,A,\,t_s,\,t_e,\;t)
   \;\longmapsto\; U(t),
 \end{equation}
-where $A$~is the initial-condition amplitude and $[t_s,t_e]$ the
-irradiation window.  We implement $f_\theta$ as a 3-layer MLP
-(128~hidden units, SiLU activation).  All seven inputs are z-score
-normalised.
-
-\paragraph{Data generation.}
-We sample 1\,500 parameter vectors from
+where $A$ is the initial-condition amplitude and $[t_s,t_e]$ the irradiation window. We implement $f_\theta$ as a 3-layer MLP (128 hidden units, SiLU activation). All seven inputs are z-score normalised. To generate training data, we sampled 1500 parameter vectors from
 $\rho\!\in\![0.05,0.6]$,
 $\beta\!\in\![0.1,2.0]$,
 $D\!\in\![0.002,0.08]$,
 $A\!\in\![0.1,1.0]$,
 $t_s\!\in\![3,20]$,
 $t_e\!-\!t_s\!\in\![3,25]$
-and run the PDE for each, recording the normalised mass at 100
-uniformly-spaced query times.  Data generation takes ${\sim}43$\,s on a
-single CPU core.
-
-\paragraph{Training.}
-The 1\,500 trajectories yield $1\,500\times100=150\,000$ input--output
-pairs.  The model is trained with Adam (lr$\,=10^{-3}$, cosine annealing)
-for 300~epochs with batch size~2\,048, converging to MSE
-$8.6\!\times\!10^{-6}$ in about 60\,s.
-
-\paragraph{Inference.}
-To predict a trajectory at 100 time points, we form a batch of 100
-queries $[(\rho,\beta,D,A,t_s,t_e,t_i)]_{i=1}^{100}$ and evaluate the
-network in a single forward pass.  \textbf{Total wall-clock time:
-0.12\,ms}---compared to 31.6\,ms for the PDE solver, a
-\textbf{274$\times$ speedup}.
+and run the PDE for each, recording the normalised mass at 100 uniformly-spaced query times.  Data generation takes ${\sim}43$\,s on a single CPU core. The 1500 trajectories yield $1\,500 \times 100=150\,000$ input-output pairs. The model is trained with Adam (lr$\,=10^{-3}$, cosine annealing) for 300 epochs with batch size 2\,048, converging to MSE $8.6\!\times\!10^{-6}$ in about 60s. To predict a trajectory at 100 time points, we form a batch $\mathcal{B}$ of 100 queries 
+\begin{equation}
+    \mathcal{B} = [(\rho,\beta,D,A,t_s,t_e,t_i)]_{i=1}^{100}
+\end{equation} 
+and evaluate the network in a single forward pass. \textbf{Total wall-clock time: 0.12ms}, compared to 31.6ms for the PDE solver, which is a \textbf{274$\times$ speedup}.
 
 % ══════════════════════════════════════════════════════════════════════════
 \section{Experimental Setup}\label{sec:setup}
