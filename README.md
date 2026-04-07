@@ -23,8 +23,6 @@ Parts of the equation represent:
 - $\rho u(1-\frac{u}{K})$ - poliferation of cells (the increase in cell number through cell growth and division).
 - $\beta R(x,t) H(x) u$ - the rate of killing cancer cells, weighted by hypoxia.
 
-### PDE Simulation
-
 ### How to run the project
 
 Python environment is handled using [uv](https://github.com/astral-sh/uv). To activate it run:
@@ -35,9 +33,3 @@ source .venv/bin/activate
 ```
 
 This repository uses precommit hooks to keep the code clean.
-
----
-
-### Bibliography
-
-1. sadf

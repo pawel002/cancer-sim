@@ -163,10 +163,136 @@ class MultiCompartmentGifHook:
     def render(self):
         if not self.frame_paths:
             return
-            
+
         print(f"Compiling {len(self.frame_paths)} multi-compartment frames into {self.save_path}...")
         with imageio.get_writer(self.save_path, mode="I", fps=self.fps) as writer:
             for filename in self.frame_paths:
                 image = imageio.imread(filename)
                 writer.append_data(image)
         shutil.rmtree(self.frames_dir, ignore_errors=True)
+
+
+# ---------------------------------------------------------------------------
+# Dual-panel hook: 2-D density heatmap  +  live mass-trajectory comparison
+# ---------------------------------------------------------------------------
+
+class DualPanelGifHook:
+    """
+    Hook that creates an animated GIF with two panels per frame:
+      Left  – 2-D tumour-density heatmap (current PDE state)
+      Right – mass-trajectory comparison (all pre-computed engines) drawn up to
+              the current time, with the training/assimilation window shaded.
+
+    Pass pre-computed reference trajectories in the constructor so the hook can
+    draw all curves simultaneously without re-running the other engines.
+    """
+
+    def __init__(
+        self,
+        save_path: str,
+        ref_trajectories: dict[str, tuple[Any, Any]],
+        train_start: float,
+        train_end: float,
+        fps: int = 8,
+        vmax: float = 1.0,
+        cmap: str = "inferno",
+        colors: dict[str, str] | None = None,
+    ) -> None:
+        """
+        :param ref_trajectories: mapping  name → (times_array, masses_array)
+                                 for every engine that should appear on the
+                                 right panel.  The PDE ground truth should be
+                                 included under the key ``"PDE"``.
+        :param train_start: Left edge of the shaded assimilation window.
+        :param train_end:   Right edge of the shaded assimilation window.
+        :param colors:      Optional per-engine colour overrides.
+        """
+        self.save_path = save_path
+        self.ref_trajectories = ref_trajectories
+        self.train_start = train_start
+        self.train_end = train_end
+        self.fps = fps
+        self.vmax = vmax
+        self.cmap = cmap
+
+        _default_colors: dict[str, str] = {
+            "PDE":      "#2b2d42",
+            "ODE":      "#8d99ae",
+            "MLP":      "#ef233c",
+            "NODE":     "#f77f00",
+            "PINN":     "#4cc9f0",
+            "SuperNet": "#7209b7",
+        }
+        self.colors: dict[str, str] = {**_default_colors, **(colors or {})}
+
+        self.frames_dir = os.path.join(os.path.dirname(save_path), ".frames_dual_tmp")
+        os.makedirs(self.frames_dir, exist_ok=True)
+        self.frame_paths: list[str] = []
+
+    def __call__(
+        self, step_idx: int, t: float, current_state: State, sim: Simulator
+    ) -> bool:
+        from .style import apply_scientific_style
+        apply_scientific_style()
+
+        u = current_state.u
+        if u is None or np.ndim(u) < 2:
+            return False
+
+        fig, (ax_map, ax_mass) = plt.subplots(1, 2, figsize=(13, 5))
+
+        # ── Left: density heatmap ─────────────────────────────────────────
+        im = ax_map.imshow(
+            u, origin="lower", vmin=0, vmax=self.vmax,
+            cmap=self.cmap, interpolation="bilinear"
+        )
+        plt.colorbar(im, ax=ax_map, fraction=0.046, pad=0.04)
+        ax_map.set_title(f"Tumour density   t = {t:.1f}", fontsize=11)
+        ax_map.set_xticks([])
+        ax_map.set_yticks([])
+
+        # ── Right: mass trajectory ────────────────────────────────────────
+        # Shaded training window
+        ax_mass.axvspan(
+            self.train_start, self.train_end,
+            alpha=0.12, color="#f4a261", label="Training window"
+        )
+        # Vertical line at current time
+        ax_mass.axvline(t, color="#333333", lw=1.0, ls="--", alpha=0.6)
+
+        for name, (ts, ms) in self.ref_trajectories.items():
+            ts_arr = np.asarray(ts)
+            ms_arr = np.asarray(ms)
+            mask = ts_arr <= t + 1e-9
+            lw = 2.5 if name == "PDE" else 1.8
+            ls = "-" if name == "PDE" else "--"
+            ax_mass.plot(
+                ts_arr[mask], ms_arr[mask],
+                color=self.colors.get(name, None),
+                lw=lw, ls=ls, label=name, alpha=0.9
+            )
+
+        ax_mass.set_xlabel("Time")
+        ax_mass.set_ylabel("Total tumour mass")
+        ax_mass.set_title("Mass trajectory comparison")
+        ax_mass.legend(fontsize=8, loc="upper right")
+        ax_mass.set_xlim(left=0)
+        ax_mass.grid(True, alpha=0.25)
+
+        plt.tight_layout()
+        frame_path = os.path.join(self.frames_dir, f"frame_{step_idx:05d}.png")
+        fig.savefig(frame_path, dpi=100)
+        self.frame_paths.append(frame_path)
+        plt.close(fig)
+        return False
+
+    def render(self) -> None:
+        if not self.frame_paths:
+            print("DualPanelGifHook: no frames captured.")
+            return
+        print(f"Compiling {len(self.frame_paths)} dual-panel frames → {self.save_path}…")
+        with imageio.get_writer(self.save_path, mode="I", fps=self.fps) as writer:
+            for p in self.frame_paths:
+                writer.append_data(imageio.imread(p))
+        shutil.rmtree(self.frames_dir, ignore_errors=True)
+        print(f"GIF saved → {self.save_path}")

@@ -208,3 +208,6 @@ __marimo__/
 
 # dont commit experiments frames :/
 experiments*
+
+# claude files
+.claude
