@@ -1,407 +1,203 @@
-\documentclass[12pt, a4paper]{article}
-
-\usepackage[a4paper, left=2.5cm, right=2.5cm, top=2.5cm, bottom=2.5cm]{geometry}
-\usepackage[T1]{fontenc}
+\documentclass[11pt]{article}
 \usepackage[utf8]{inputenc}
-\usepackage[english]{babel}
-\usepackage{lmodern}
-\usepackage{microtype}
-\usepackage{amsmath, amssymb}
-\usepackage{bm}
-\usepackage{graphicx}
-\usepackage{float}
-\usepackage{caption, subcaption}
-\usepackage{booktabs}
-\usepackage{xcolor}
-\usepackage{hyperref}
-\usepackage{cleveref}
-\usepackage{enumitem}
-\usepackage{setspace}
-\usepackage{fancyhdr}
-\usepackage{csquotes}
+\usepackage{geometry}
+\usepackage{amsmath}
+\usepackage{amssymb}
+\geometry{margin=1in}
 
-\usepackage[style=numeric, sorting=none, maxbibnames=4]{biblatex}
+\usepackage[style=numeric]{biblatex}
 \addbibresource{references.bib}
 
-\hypersetup{colorlinks=true, linkcolor=black!60!blue,
-            citecolor=black!60!blue, urlcolor=black!60!blue}
-\pagestyle{fancy}\fancyhf{}
-\fancyhead[L]{\small\itshape Performance-Efficient Surrogates for Cancer Growth}
-\fancyhead[R]{\small\thepage}
-\renewcommand{\headrulewidth}{0.4pt}
-\captionsetup{font=small, labelfont=bf, skip=4pt}
-\setstretch{1.12}
+\title{
+    \textbf{Physics-Informed Model Reduction for Tumor Dynamics under Uncertainty}
+}
 
-% ── notation ──────────────────────────────────────────────────────────────
-\newcommand{\bx}{\bm{x}}
-\newcommand{\dt}{\Delta t}
-\newcommand{\Heff}{H_{\mathrm{eff}}}
-\newcommand{\fode}{f_{\mathrm{ODE}}}
+\author{
+    Paweł Jarosz \quad Igor Zakrocki \quad Witold Dzwinel \\
+    \vspace{0.2cm}
+    \textit{The Faculty of Computer Science, AGH University in Cracow} \\
+    \vspace{0.1cm}
+    \texttt{\{pawjarosz, zakrocki\}@student.agh.edu.pl, dzwinel@agh.edu.pl}
+}
+
+\date{\today}
 
 \begin{document}
 
-% ── title ─────────────────────────────────────────────────────────────────
-\title{\Large\textbf{Performance-Efficient Surrogate for Simulating\\
-       Cancer Growth with Hypoxia - TrajNet}}
-\author{
-  Pawe\l{} Jarosz \quad Igor Zakrocki\\[4pt]
-  \small Department of Computer Science, AGH University of Krakow}
-\date{\today}
-\maketitle\thispagestyle{fancy}
+\maketitle
 
-% ── abstract ──────────────────────────────────────────────────────────────
-\begin{abstract}\noindent
-We benchmark six surrogate strategies for accelerating the simulation of
-two-dimensional tumour growth with spatial hypoxia under fractionated
-radiotherapy.  Starting from a reaction-diffusion PDE as the ground truth
-we compare: (i) a spatially-averaged ODE, (ii) an MLP time-stepper,
-(iii)~a Neural ODE with physics-guided correction, (iv) a Physics-Informed
-Neural Network, (v) a SuperNet that distils the PINN into a fast ODE
-correction, and (vi) a \emph{Trajectory Predictor} (TrajNet)---a
-conditional neural network trained on 1\,500 PDE simulations with
-randomised parameters that predicts the full mass trajectory in a single
-forward pass.  On a canonical $50\!\times\!50$ grid the step-wise
-surrogates barely outperform the highly optimised PDE solver, but TrajNet
-delivers a \textbf{274$\times$ wall-clock speedup} while maintaining an
-RMSE of $1.7\!\times\!10^{-3}$.  On 100 unseen parameter combinations the
-median RMSE remains $2.6\!\times\!10^{-3}$, confirming good
-generalisation.
-All code, trained models and figure-generation scripts are released as
-open source.
+\begin{abstract}
+Predictive modeling of cancer therapy operates under high uncertainty, limited patient-specific data, and strong computational constraints. In this regime, increasing model complexity does not improve predictive capability, but instead leads to parameter non-identifiability and poor robustness. As a result, high-fidelity PDE models are difficult to calibrate, while purely data-driven or data-assimilated models remain sensitive to noise and data scarcity. In this work, we propose physics-informed low-dimensional surrogates for tumor dynamics under radiotherapy. Starting from a reaction–diffusion formulation, we derive spaceless models describing tumor mass evolution and incorporate implicit spatial effects through integral constraints and learned corrections. Two approaches are investigated: Neural ODE (NODE) and Physics-Informed Neural Networks (PINN), both regularized by tumor mass dynamics. Numerical experiments with heterogeneous irradiation scenarios show that the proposed surrogates reproduce the dynamics of the full spatio-temporal model at a fraction of the computational cost. The results demonstrate that physics-informed low-dimensional models provide a robust and efficient alternative to both high-dimensional mechanistic models and purely data-driven approaches in uncertainty-dominated settings.
 \end{abstract}
 
-% ══════════════════════════════════════════════════════════════════════════
 \section{Introduction}
-Solid tumours develop hypoxic (oxygen-deprived) regions as they outgrow their vasculature \cite{vaupel2004hypoxia,tannock1972relation}. Because hypoxic cells are two to three times less radiosensitive than well-oxygenated cells \cite{hall2006radiobiology}, hypoxia is a major mechanism of resistance to radiotherapy.  Accurate mathematical modelling
-of tumour growth and treatment response is therefore essential for
-protocol optimisation \cite{altrock2015mathematics,cristini2010multiscale}.
-The standard approach couples logistic proliferation, Fickian diffusion
-and a radiation-kill term into a reaction-diffusion PDE
-\cite{murray2002mathematical,swanson2000quantitative}.  Integrating this
-PDE on a fine mesh over clinically relevant horizons (days to months)
-is expensive; the cost becomes prohibitive when thousands of evaluations
-are needed, as in Bayesian inference, sensitivity analysis or
-digital-twin calibration
-\cite{beaumont2002approximate,morris1991factorial,talagrand1987variational}. Surrogate modelling replaces the PDE solver with a cheaper approximation.
-Classical options include spatially-averaged ODEs, which are fast but
-discard all spatial information \cite{tracqui2009biophysical}.  Recent
-machine-learning methods, like MLP time-steppers \cite{lagaris1998artificial},
-Neural ODEs \cite{chen2018neural}, PINNs
-\cite{raissi2019physics,karniadakis2021physics} and teacher-student
-distillation \cite{hinton2015distilling}, offer accuracy improvements but typically still operate step-by-step and thus inherit much of the PDE's overhead.
 
-On a well-optimised $50\!\times\!50$ grid the PDE itself runs in
-${\sim}30$\,ms (on a MacBook Pro M1 CPU, using Python and Numpy), so step-wise neural surrogates provide \emph{no
-meaningful speedup} (from $0.7$ to 3$\times$ in our experiments).  The decisive
-gain comes from \emph{eliminating the time-stepping loop entirely}: a
-conditional network trained across many PDE runs predicts the full
-trajectory in a single batched forward pass. Our contributions:
-\begin{enumerate}[leftmargin=2em,itemsep=2pt]
-  \item We implement six surrogates in a unified framework and show that
-        step-wise methods offer negligible speedup on small grids.
-  \item We propose a \emph{Trajectory Predictor} (TrajNet) that maps
-        physical parameters directly to the full mass trajectory and
-        achieves a \textbf{274$\times$ speedup} with an RMSE of
-        $1.7\!\times\!10^{-3}$.
-  \item We demonstrate that TrajNet generalises across unseen parameter
-        combinations (median RMSE $2.6\!\times\!10^{-3}$ over 100 random
-        test scenarios).
-\end{enumerate}
+Optimizing radiotherapy treatment planning remains a fundamental challenge in computational oncology. Reliable prediction of tumor response requires models capable of capturing the interplay between growth, spatial heterogeneity, and treatment effects under complex irradiation protocols. While mechanistic, spatio-temporal, multiscale, and hybrid models based on partial differential equations (PDEs), sometimes enforced by discrete models, provide a principled description of these processes, their practical use is severely limited. The main difficulty lies in the regime in which therapy prediction operates: high uncertainty, limited patient-specific data, and strong computational constraints. In this setting, increasing model complexity does not improve predictive capability. On the contrary, it amplifies parameter non-identifiability, sensitivity to noise, and computational cost. As a result, high-fidelity PDE models, although descriptive, become difficult to calibrate and unreliable for patient-specific forecasting during radiotherapy.
 
-% ══════════════════════════════════════════════════════════════════════════
-\section{Problem Formulation}\label{sec:problem}
-% ══════════════════════════════════════════════════════════════════════════
+This limitation is further exacerbated by the non-stationary nature of tumor dynamics under treatment. Repeated irradiation, evolving hypoxia, and adaptive changes in the tumor microenvironment lead to highly irregular dynamics that are significantly harder to predict than untreated growth. Consequently, data assimilation techniques applied to complex models become ill-conditioned, as they attempt to infer a large number of interacting parameters from sparse and noisy observations.
 
-Let's define our 2D problem domain to be $\Omega=[0,L]^2$ and a normalized cancer cell density function as $u(\bx, t) \in[0,1]$, where $\bx \in \Omega$ and $t \in \mathbb{R}^+$ represents spatial and temporal dimensions accordingly. The equation describing the evolution of cells on the domain can be described using the following PDE equation:
-\begin{equation}\label{eq:pde}
-    \partial_t u = D\nabla^2 u + \rho u(1-u) - \beta R(\bx, t) H(\bx) u, \qquad u\big|_{\partial\Omega} = 0,
-\end{equation}
-with diffusion coefficient $D$, proliferation rate $\rho$, radiosensitivity $\beta$, dose field $R(\bx,t)=r(t)\,W(\bx)$ (temporal schedule $\times$ beam mask, here $W\!\equiv\!1$), and hypoxia map $H(\bx)\in(0,1]$:
-\begin{equation}
-    H(\bx) = 0.3 + 0.7 \exp \bigl(-\|\bx-\bx_c\|^2/\sigma_H^2\bigr).
-\end{equation}
-The ODE surrogate can be obtained by averaging \cref{eq:pde} over $\Omega$ with Dirichlet BCs, yielding the scalar spatial average $U(t)=L^{-2}\!\int_\Omega u\,d\bx$:
-\begin{equation}\label{eq:ode}
-  \dot U = \rho\,U(1-U) - \beta\,\Heff\,r(t)\,U,
-  \qquad \Heff = L^{-2}\!\textstyle\int_\Omega H\,d\bx.
-\end{equation}
-By splitting $[0,T]$ into an \textbf{assimilation window} $[0,t_b]$ (used for training/fitting) and an \textbf{extrapolation window} $(t_b,T]$, Accuracy can be measured as
-\begin{equation}\label{eq:rmse}
-    \mathrm{RMSE}(\hat U,U_\mathrm{PDE};\mathcal{T}) = \sqrt{|\mathcal{T}|^{-1}\textstyle\sum_{t_i\in\mathcal{T}}
-    (\hat U_i - U_i^\mathrm{PDE})^2}.
-\end{equation}
+Purely data-driven approaches face complementary limitations. In realistic clinical scenarios, available data are scarce, heterogeneous, and collected under changing conditions. Models trained on past observations often fail to generalize to new therapy regimes, particularly when prior treatment alters tumor structure and transport properties. Moreover, the absence of physical constraints may lead to non-physical or unstable predictions.
 
-% ══════════════════════════════════════════════════════════════════════════
-\section{Surrogate Methods}\label{sec:methods}
+These observations suggest that model complexity is often misaligned with the specific requirements of the problem. Instead, effective predictive modeling in this regime requires a different strategy: reducing dimensionality while preserving the dominant physics of the system. In this work, we argue that physics-informed, low-dimensional surrogate models provide a more appropriate modeling paradigm under uncertainty and data scarcity. By combining minimal mechanistic structure with data-driven corrections, such models retain essential dynamics while remaining robust and computationally tractable.
 
-To achieve a set of existing methods, which we can compare our implementations to, we decided to implement these existing methods to our problem. 
+In particular, we focus on spaceless surrogate models based on ordinary differential equations (ODEs), which describe the evolution of clinically relevant observables such as tumor mass. While naive spatial averaging leads to the loss of critical information, we show that spatial effects can be implicitly preserved through integral constraints and physics-informed regularization. Starting from a reaction–diffusion PDE model of tumor dynamics under radiotherapy, we construct surrogate models based on Neural ODE (NODE) and Physics-Informed Neural Networks (PINN), both regularized by tumor mass dynamics. These models act as low-dimensional representations of the full spatio-temporal system, capturing the dominant behavior while treating unresolved spatial heterogeneity as structured uncertainty.
 
-\begin{enumerate}
-    \item \textbf{MLP time-stepper.} A two-layer MLP $F_\theta:(U_n,r_n,\dt,\rho,\beta)\mapsto U_{n+1}$ (32 hidden units, ReLU) trained on 150 randomised ODE trajectories via MSE \cite{hornik1989multilayer,lagaris1998artificial}.
+The results presented in this work support a central claim: in uncertainty-dominated, data-limited settings, simple physics-informed surrogates can outperform both complex mechanistic models and purely data-driven approaches in terms of robustness, efficiency, and practical usability for therapy-oriented prediction. The main contributions of this work are as follows:
 
-    \item \textbf{Neural ODE (NODE).}Extends the ODE with a learned correction $\dot M = \fode(M,r) + \mathrm{NN}(M,C,r)$ and tracks the centre-of-mass~$C$ \cite{chen2018neural}. The physics baseline $\fode$ from \cref{eq:ode} regularises extrapolation.
-
-    \item \textbf{Physics Informed Neural Network (PINN).} A 3-layer MLP $u_\theta(t,x_1,x_2)$ (Tanh and Sigmoid) trained to minimise $w_\mathrm{pde}\mathcal{L}_\mathrm{pde}+w_\mathrm{ic}\mathcal{L}_\mathrm{ic}+w_\mathrm{bc}\mathcal{L}_\mathrm{bc}+w_\mathrm{data}\mathcal{L}_\mathrm{data}$, where the PDE residual $\mathcal{L}_\mathrm{pde}$ is evaluated via automatic differentiation on random collocation points \cite{raissi2019physics,lu2021deepxde}.
-
-    \item \textbf{SuperNet.} Distils PINN knowledge into a fast ODE correction: $U_{n+1}=U_n+\dt [\fode(U_n,r_n)+g_\phi(U_n,r_n)]$, where $g_\phi$ is a 2-layer MLP trained on PINN-derived residuals \cite{hinton2015distilling}.
+\begin{itemize}
+    \item \textbf{Reduction-oriented modeling framework.} We formulate tumor dynamics under radiotherapy as a low-dimensional control problem and argue that, in data-limited settings, highly parameterized models become difficult to calibrate due to non-identifiability and time-varying parameters. 
     
-\end{enumerate}
-All four baselines run \emph{step-by-step}: they advance the state by one $\dt$ per call, repeating for all $T/\dt$ steps. As we show in \cref{sec:results}, this loop overhead limits their practical speedup on small grids.
+    \item \textbf{Physics-informed surrogate models.} We derive low-dimensional surrogates from a reaction–diffusion PDE and develop Neural ODE (NODE) and PINN approaches that capture spatial effects through integral constraints and learned corrections. 
 
-\subsection{Trajectory Predictor (TrajNet)}\label{sec:trajnet}
+    \item \textbf{Accuracy-efficiency trade-off under heterogeneity.} We show that the proposed surrogates reproduce tumor mass dynamics in heterogeneous scenarios at a significantly lower computational cost, providing a robust alternative to complex PDE and data-driven models.
+\end{itemize}
 
-We propose a fundamentally different approach: train a single network across many PDE simulations so that at inference time the \emph{entire} trajectory is obtained in one batched forward pass. The surrogate is a conditional function
-\begin{equation}\label{eq:trajnet}
-  f_\theta : (\rho,\,\beta,\,D,\,A,\,t_s,\,t_e,\;t)
-  \;\longmapsto\; U(t),
+The proposed approach is fundamentally reduction-oriented. Our goal is not to reproduce the full spatio-temporal dynamics, but to construct low-dimensional models that accurately capture observable tumor evolution under uncertainty. This motivates the use of physics-informed surrogates as a robust and efficient alternative to high-dimensional models.
+
+\section{Tumor under Therapy}
+
+\subsection{The Spatio-Temporal Model}
+
+The spatio-temporal dynamics of tumor growth and response to therapy are commonly described using reaction–diffusion equations. A widely used formulation combines cell proliferation, spatial invasion, and treatment effects into a single partial differential equation of the form:
+
+\begin{equation} \label{eq:pde}
+    \frac{\partial u(x, t)}{\partial t} = D \nabla^2 u + \rho u \left(1 - \frac{u}{K}\right) - \beta R(x, t) H(x) u + \zeta(u, x, t),
 \end{equation}
-where $A$ is the initial-condition amplitude and $[t_s,t_e]$ the irradiation window. We implement $f_\theta$ as a 3-layer MLP (128 hidden units, SiLU activation). All seven inputs are z-score normalised. To generate training data, we sampled 1500 parameter vectors from
-$\rho\!\in\![0.05,0.6]$,
-$\beta\!\in\![0.1,2.0]$,
-$D\!\in\![0.002,0.08]$,
-$A\!\in\![0.1,1.0]$,
-$t_s\!\in\![3,20]$,
-$t_e\!-\!t_s\!\in\![3,25]$
-and run the PDE for each, recording the normalised mass at 100 uniformly-spaced query times.  Data generation takes ${\sim}43$\,s on a single CPU core. The 1500 trajectories yield $1\,500 \times 100=150\,000$ input-output pairs. The model is trained with Adam (lr$\,=10^{-3}$, cosine annealing) for 300 epochs with batch size 2\,048, converging to MSE $8.6\!\times\!10^{-6}$ in about 60s. To predict a trajectory at 100 time points, we form a batch $\mathcal{B}$ of 100 queries 
+
+where $u(x, t)$ denotes the local tumor cell density at a spatial coordinate $x \in \Omega$ and time $t > 0$. The parameter $D$ is the diffusion coefficient representing cell motility, $\rho$ is the proliferation rate, and $K$ is the carrying capacity. The term $\beta R(x, t) H(x) u$ models the effect of radiotherapy, with $R(x, t)$ describing the local dose distribution and $H(x)$ accounting for spatial variations in radiosensitivity (e.g., due to hypoxia). The residual term $\zeta(u, x, t)$ represents unresolved biological mechanisms and modeling uncertainties.
+
+In practice, 3D tumor structure can be observed using imaging techniques such as CT or MRI; however, these observations are limited to discrete snapshots separated by relatively large time intervals. Consequently, the full spatio-temporal field $u(x, t)$ is not directly observable. Clinical measurements typically capture only the visible macroscopic tumor volume, which may underestimate the true tumor burden. 
+
+\subsection{Derivation of the Macroscopic Surrogate}
+
+Given that clinical measurements correspond to macroscopic quantities, we define the observable global tumor mass, $y(t)$, as:
+
 \begin{equation}
-    \mathcal{B} = [(\rho,\beta,D,A,t_s,t_e,t_i)]_{i=1}^{100}
-\end{equation} 
-and evaluate the network in a single forward pass. \textbf{Total wall-clock time: 0.12ms}, compared to 31.6ms for the PDE solver, which is a \textbf{274$\times$ speedup}.
+    y(t) = \int_{\Omega} u(x, t) \,\text{d}x.
+\end{equation}
 
-% ══════════════════════════════════════════════════════════════════════════
-\section{Experimental Setup}\label{sec:setup}
-% ══════════════════════════════════════════════════════════════════════════
+Assuming a uniform weighting for total tumor mass, the rate of change is obtained by differentiating with respect to time:
 
-\begin{table}[t]\centering\small
-\caption{Canonical scenario parameters.}\label{tab:scenario}
-\begin{tabular}{llll}\toprule
-Parameter & Symbol & Value & Unit\\\midrule
-Domain & $L$ & 10 & ---\\
-Grid & $N$ & 50 & ---\\
-Time step / horizon & $\dt\,/\,T$ & 0.05\,/\,40 & days\\
-Diffusion & $D$ & 0.01 & ---\\
-Proliferation & $\rho$ & 0.3 & day$^{-1}$\\
-Radiosensitivity & $\beta$ & 0.8 & ---\\
-Radiation window & $[t_s,t_e]$ & $[10,30]$ & days\\
-Training window & $[0,t_b]$ & $[0,20]$ & days\\
-\bottomrule\end{tabular}
-\end{table}
+\begin{equation} \label{eq:mass_derivative}
+    \dot{y}(t) = \int_{\Omega} \frac{\partial u(x,t)}{\partial t} \,\text{d}x.
+\end{equation}
 
-All single-scenario surrogates (ODE, MLP, NODE, PINN, SuperNet) are
-trained on the canonical parameters in \cref{tab:scenario}.
-TrajNet is trained across 1\,500 randomised parameter
-vectors and tested on (i) the canonical scenario and (ii) 100~unseen
-random scenarios.  The initial condition is a Gaussian bump of
-amplitude~$A\!=\!0.8$, $\sigma\!=\!1.5$, centred at~$(5,5)$.
-All experiments run on an Apple~M-series CPU with
-PyTorch\,2.x \cite{paszke2019pytorch} and SciPy
-\cite{virtanen2020scipy}.
+Substituting the right-hand side of Equation \eqref{eq:pde} into Equation \eqref{eq:mass_derivative}, and noting that the diffusion term integrates to zero under no-flux boundary conditions ($\int_{\Omega} \nabla^2 u \,\text{d}x = 0$), yields the exact macroscopic dynamics:
 
-\begin{figure}[t]\centering
-  \includegraphics[width=.88\textwidth]{figures/fig_setup.png}
-  \caption{Simulation setup.  \textbf{Left:} initial condition
-  $u_0(\bx)$.  \textbf{Right:} hypoxia map $H(\bx)$; values near~1
-  (light) are well-oxygenated; values near~0.3 (dark, periphery) are
-  hypoxic and radiation-resistant.}\label{fig:setup}
-\end{figure}
+\begin{equation} \label{eq:exact_macroscopic}
+    \dot{y}(t) = \rho y(t) 
+        - \frac{\rho}{K} \int_{\Omega} u^2(x,t)\,\text{d}x 
+        - \beta \int_{\Omega} R(x,t)H(x)u(x,t)\,\text{d}x 
+        + \int_{\Omega} \zeta(u,x,t)\,\text{d}x.
+\end{equation}
 
-% ══════════════════════════════════════════════════════════════════════════
-\section{Results}\label{sec:results}
-% ══════════════════════════════════════════════════════════════════════════
+Approximating this exact integration using a phenomenological ODE yields the surrogate model:
 
-\subsection{PDE dynamics}
-\Cref{fig:snapshots} shows eight density snapshots.  The tumour grows and
-diffuses until irradiation begins at $t\!=\!10$; mass decreases sharply
-during treatment, with the hypoxic rim persisting longer; after $t\!=\!30$
-the residual tumour regrows.
+\begin{equation} \label{eq:ode_surrogate}
+    \dot{y}(t) = \rho y(t) - \alpha y^2(t) - \beta_{\text{eff}} c(t) y(t),
+\end{equation}
 
-\begin{figure}[H]\centering
-  \includegraphics[width=.97\textwidth]{figures/fig_pde_snapshots.png}
-  \caption{PDE ground-truth density at eight time points.  Irradiation
-  ($t\!\in\![10,30]$) visibly reduces the central density while the
-  hypoxic periphery persists.}\label{fig:snapshots}
-\end{figure}
+where $\alpha = \rho / K_{\text{eff}}$, $\beta_{\text{eff}}$ is an effective radiosensitivity parameter, and $c(t)$ is the macroscopic control/input function describing the applied therapy over time (e.g., total effective dose rate). By comparing \eqref{eq:exact_macroscopic} with \eqref{eq:ode_surrogate}, we define the residual discrepancy $\delta(t) = \dot{y}_{\text{exact}} - \dot{y}_{\text{approx}}$:
 
-\subsection{Trajectory comparison}
-\Cref{fig:mass} shows the normalised mass $U(t)$ for all methods.
-TrajNet (green, solid) closely tracks the PDE throughout; the MLP
-(red, dashed) diverges outside the training window; the ODE
-under-predicts the radiation response.
+\begin{equation} \label{eq:residual}
+\delta(t) = 
+\left( \alpha y^2 - \frac{\rho}{K} \int_{\Omega} u^2\,\text{d}x \right) 
++ \left( \beta_{\text{eff}} c(t) y - \beta \int_{\Omega} R(x,t)H(x)u\,\text{d}x \right) 
++ \int_{\Omega} \zeta(u,x,t)\,\text{d}x.
+\end{equation}
 
-\begin{figure}[H]\centering
-  \includegraphics[width=.94\textwidth]{figures/fig_mass_comparison.png}
-  \caption{Mass trajectory comparison.  Shaded orange region:
-  training window.  TrajNet tracks the PDE most closely; the MLP
-  drifts after $t\!=\!20$.}\label{fig:mass}
-\end{figure}
-
-\subsection{Quantitative comparison}
-
-\begin{table}[H]\centering\small
-\caption{Accuracy and wall-clock performance.  RMSE is for the
-normalised spatial average~$U$.  ``Total'' is the wall-clock time for the
-full 40-day trajectory.}\label{tab:results}
-\begin{tabular}{lcccc}\toprule
-Method & RMSE (train) & RMSE (test) & Total (ms) & Speedup\\\midrule
-PDE (ref.)   & ---                       & ---                      & 31.6   & 1$\times$\\
-ODE          & $1.4\!\times\!10^{-1}$    & $1.0\!\times\!10^{-2}$   & 44.7   & 0.7$\times$\\
-MLP          & $1.4\!\times\!10^{-1}$    & $1.5\!\times\!10^{-1}$   & 11.1   & 3$\times$\\
-NODE         & $1.8\!\times\!10^{-2}$    & $2.4\!\times\!10^{-1}$   & 42.8   & 0.7$\times$\\
-PINN         & $2.0\!\times\!10^{-2}$    & $2.1\!\times\!10^{-2}$   & 547    & 0.06$\times$\\
-SuperNet     & $5.7\!\times\!10^{-2}$    & $3.0\!\times\!10^{-2}$   & 14.8   & 2$\times$\\[3pt]
-\textbf{TrajNet} & $\mathbf{2.6\!\times\!10^{-3}}$
-                  & $\mathbf{1.7\!\times\!10^{-3}}$
-                  & \textbf{0.12}
-                  & \textbf{274$\times$}\\
-\bottomrule\end{tabular}
-\end{table}
-
-\noindent Key observations from \cref{tab:results}:
-\begin{itemize}[leftmargin=2em,itemsep=2pt]
-  \item \textbf{Step-wise surrogates provide minimal speedup.}
-        On the $50\!\times\!50$ grid the PDE runs in 31.6\,ms; all
-        step-wise methods still iterate 800 times, so Python/PyTorch
-        overhead wipes out any per-step saving.  Only MLP (3$\times$) and
-        SuperNet (2$\times$) are faster than the PDE.
-  \item \textbf{TrajNet is 274$\times$ faster} because it replaces 800
-        sequential steps with a \emph{single} batched forward pass
-        through a small MLP.
-  \item \textbf{TrajNet is the most accurate} on the canonical scenario
-        (RMSE $1.7\!\times\!10^{-3}$), having been trained on
-        1\,500 diverse PDE solutions.
-  \item \textbf{PINN is the most consistent step-wise method}
-        ($\Delta$RMSE${}<7\%$ between windows) thanks to the PDE-residual
-        constraint, but is the \emph{slowest} (547\,ms) because it
-        evaluates the full 2\,500-point grid at every step.
-  \item \textbf{MLP extrapolation drift} confirms that unconstrained
-        black-box surrogates are unreliable beyond the training horizon.
-\end{itemize}
-
-\begin{figure}[H]\centering
-  \begin{subfigure}[b]{.48\textwidth}\centering
-    \includegraphics[width=\textwidth]{figures/fig_rmse_bar.png}
-    \caption{RMSE by method and window.}\label{fig:rmse}
-  \end{subfigure}\hfill
-  \begin{subfigure}[b]{.48\textwidth}\centering
-    \includegraphics[width=\textwidth]{figures/fig_frontier.png}
-    \caption{Accuracy--efficiency frontier.}\label{fig:frontier}
-  \end{subfigure}
-  \caption{\textbf{(a)}~RMSE comparison (log scale).  Solid: training
-  window; hatched: extrapolation.  \textbf{(b)}~Pareto frontier: TrajNet
-  (bottom-left) dominates all other methods on both
-  axes.}\label{fig:acc_eff}
-\end{figure}
-
-\subsection{TrajNet generalisation}
-To assess whether TrajNet memorises or truly learns the physics, we
-evaluate it on 100~unseen parameter combinations drawn from the same
-ranges used in training (\cref{fig:gen}).  The median RMSE is
-$2.6\!\times\!10^{-3}$ and the 95th~percentile is
-$6.2\!\times\!10^{-3}$, demonstrating robust generalisation.
-
-\begin{figure}[H]\centering
-  \includegraphics[width=.65\textwidth]{figures/fig_trajnet_generalization.png}
-  \caption{RMSE histogram of TrajNet on 100 unseen parameter
-  combinations.  The distribution is sharply concentrated near zero,
-  confirming that the model generalises well across the six-dimensional
-  parameter space.}\label{fig:gen}
-\end{figure}
-
-\subsection{Wall-clock speedup}
-\Cref{fig:speedup} shows the speedup of each method relative to the PDE.
-Step-wise surrogates cluster around 1$\times$; TrajNet stands apart at
-274$\times$.  This advantage grows further with grid size: doubling the
-resolution to $100\!\times\!100$ quadruples the PDE cost while leaving
-TrajNet unchanged.
-
-\begin{figure}[H]\centering
-  \includegraphics[width=.65\textwidth]{figures/fig_speedup.png}
-  \caption{Wall-clock speedup (log scale) for the full
-  trajectory.}\label{fig:speedup}
-\end{figure}
-
-\subsection{PINN spatial reconstruction}
-Although TrajNet surpasses the PINN on mass-trajectory prediction, the
-PINN uniquely provides the full density field~$u(\bx,t)$.
-\Cref{fig:pinn} compares PINN reconstructions with the PDE at three time
-points.  The PINN captures the overall shape but exhibits smoothing
-artefacts due to the small network; larger architectures would improve
-spatial fidelity \cite{karniadakis2021physics}.
-
-\begin{figure}[H]\centering
-  \includegraphics[width=.95\textwidth]{figures/fig_pinn_reconstruction.png}
-  \caption{PDE (top) vs.\ PINN reconstruction
-  (bottom).}\label{fig:pinn}
-\end{figure}
-
-% ══════════════════════════════════════════════════════════════════════════
-\section{Discussion}\label{sec:discussion}
-% ══════════════════════════════════════════════════════════════════════════
-
-\paragraph{Why step-wise surrogates fail to speed up small-grid PDEs.}
-On a $50\!\times\!50$ mesh, \texttt{scipy.ndimage.laplace} executes in
-microseconds; the PDE loop completes in ${\sim}30$\,ms.  Any surrogate
-that still iterates over 800 steps incurs Python interpreter and PyTorch
-dispatch overhead that dominates the per-step computation.  The only way
-to achieve large speedups is to \emph{bypass the loop}.
-
-\paragraph{TrajNet as an amortised solver.}
-TrajNet shifts all computation to an offline training phase (1\,500 PDE
-runs $\approx$43\,s, then 300~epochs $\approx$60\,s) and amortises it
-over all future queries.  Even a single query already saves time compared
-to running the PDE; in a Monte-Carlo setting with $10^4$ samples the
-aggregate saving is ${\sim}5$~minutes of PDE time reduced to
-${\sim}1.2$\,s.
-
-\paragraph{When spatial fields are needed.}
-TrajNet and the other scalar surrogates predict only the total mass~$U(t)$.
-When the full density field is required (e.g.\ for dose planning), the
-PINN or PDE must be used.  A natural extension is to predict a small set
-of spatial moments---peak density, effective radius, centre of
-mass---alongside the mass, adding minimal overhead to TrajNet while
-recovering key geometric information.
-
-\paragraph{Limitations.}
-\begin{itemize}[leftmargin=2em,itemsep=1pt]
-  \item The training set covers a fixed IC shape (Gaussian) and a fixed
-        hypoxia map.  Generalising to arbitrary shapes would require
-        richer input encodings (e.g.\ shape descriptors or image
-        embeddings).
-  \item PINN and NODE use fast-benchmark settings (400~epochs, small
-        networks).  With longer training they would be more accurate but
-        still step-wise.
-  \item Extension to 3D or patient-specific geometries is natural but
-        would require larger training budgets.
-\end{itemize}
-
-% ══════════════════════════════════════════════════════════════════════════
-\section{Conclusions}
-% ══════════════════════════════════════════════════════════════════════════
-\begin{enumerate}[leftmargin=2em,itemsep=2pt]
-  \item Step-wise neural surrogates (MLP, NODE, PINN, SuperNet) provide
-        \emph{negligible speedup} on small 2D grids because the
-        time-stepping loop itself is the bottleneck.
-  \item The \textbf{Trajectory Predictor} eliminates the loop and
-        achieves a \textbf{274$\times$ speedup} with RMSE
-        $1.7\!\times\!10^{-3}$, making it suitable for ensemble
-        forecasting, Bayesian inference and treatment optimisation.
-  \item TrajNet \textbf{generalises robustly} across a six-dimensional
-        parameter space (median test RMSE $2.6\!\times\!10^{-3}$ on
-        100~unseen scenarios).
-  \item Among step-wise methods, the \textbf{PINN} is the most
-        extrapolation-resistant thanks to PDE-residual regularisation.
-  \item Physics constraints (ODE baseline in NODE and SuperNet; PDE
-        residual in PINN) are essential to prevent extrapolation drift
-        in learned surrogates.
+This formulation isolates three distinct sources of error inherent in mean-field approximations:
+\begin{enumerate}
+\item \textbf{Spatial non-linearity:} $\frac{\rho}{K}\int_{\Omega} u^2 \,\text{d}x \neq \alpha y^2$
+\item \textbf{Inconsistent response to radiotherapy:} $\beta \int_{\Omega} R(x,t)H(x)u\,\text{d}x \neq \beta_{\text{eff}} c(t) y$
+\item \textbf{Missing physics and biology:} $\int_{\Omega} \zeta(u,x,t)\,\text{d}x \neq 0$
 \end{enumerate}
 
-\medskip\noindent
-The modular framework released with this paper allows new engines to be
-added by implementing a single \texttt{step()} method and immediately
-benefit from the shared training, visualisation and benchmarking
-infrastructure.
+To compensate for these errors, we construct a physics-informed surrogate taking the Neural ODE form:
 
-\newpage
+\begin{equation}
+    \dot{y} = f_{\mathrm{RT}}(y, c(t); \theta) + g_{\phi}(y, t, c(t)),
+\end{equation}
+
+where $f_{\mathrm{RT}} = \rho y (1 - y / K_{\text{eff}}) - \beta_{\text{eff}} c(t) y$ is the known mechanistic core, and $g_{\phi}$ structurally learns the residual error $\delta(t)$. 
+
+\subsection{Spatially Aware Neural ODE}
+
+A purely mass-based ODE struggles to resolve the "inconsistent response" term in Equation \eqref{eq:residual} because radiation $R(x,t)$ is highly localized. If the tumor mass $y(t)$ shifts spatially out of the radiation beam, $y(t)$ alone cannot predict the drop in therapy efficacy. To mathematically motivate a solution, we can approximate the radiotherapy integral using the First Mean Value Theorem for Definite Integrals, evaluating the localized dose $R(x,t)$ at the tumor's spatial center of mass $z(t)$:
+
+\begin{equation}
+    \int_{\Omega} R(x,t)H(x)u(x,t)\,\text{d}x \approx R(z(t), t) \bar{H} \int_{\Omega} u(x,t)\,\text{d}x = R(z(t), t) \bar{H} y(t),
+\end{equation}
+where $z(t)$ is the center of mass, defined as:
+\begin{equation}
+    z(t) = \frac{\int_{\Omega} x \, u(x,t)\,\text{d}x}{y(t)}.
+\end{equation}
+
+This derivation reveals that tracking the spatial center of mass $z(t)$ dramatically reduces the closure error related to localized therapies. Therefore, we extend the Neural ODE state space to $\mathbf{y}(t) = [y(t), z(t)]^T$. The dynamics are modeled hybridly: the mass evolves via the mechanistic core plus a learned residual, while the center of mass dynamics (driven by asymmetric growth or diffusion) are approximated purely by the neural network:
+
+\begin{align}
+    \dot{y} &= f_{\mathrm{RT}}(y, c(t); \rho, \beta) + g_{\phi, y}(\mathbf{y}, c(t), t), \\
+    \dot{z} &= g_{\phi, z}(\mathbf{y}, c(t), t).
+\end{align}
+
+To explicitly inform the network about the spatial targeting of the therapy, we introduce the geometric distance between the tumor center $z(t)$ and the beam isocenter $x_{\mathrm{beam}}$. The effectiveness is modulated by this spatial alignment:
+\begin{equation}
+    \mathcal{A}(t) = |z(t) - x_{\mathrm{beam}}| \approx 0 \implies \text{hit}, \quad \mathcal{A}(t) \gg 0 \implies \text{miss}.
+\end{equation}
+By passing $\mathcal{A}(t)$ as a feature to the network $g_\phi$, the surrogate effectively embeds spatial awareness without requiring a full spatial grid.
+
+\subsection{PINN-Guided Fast Rollout}
+
+Evaluating a full spatio-temporal PINN to forecast therapy outcomes requires integrating the PDE over a dense grid, which is computationally prohibitive for rapid treatment planning. To resolve this, we leverage the PINN not as the final predictive tool, but as a high-fidelity "teacher" to generate offline trajectories, which are then used to calibrate a low-dimensional explicit ODE rollout. For a discrete forward Euler time step $n \to n+1$, the fast rollout is defined as:
+
+\begin{equation} \label{eq:supernet_step}
+    y_{n+1} = y_n + \Delta t \left( f_{\mathrm{RT}}(y_n, c_n; \rho, \beta) + g_\phi(\mathbf{s}_n) \right),
+\end{equation}
+
+where $g_\phi$ is a Multi-Layer Perceptron (MLP) mapping features $\mathbf{s}_n = [y_n, c_n, \Delta t, \rho, \beta, \text{params}]$ to the residual correction. The mathematical motivation for this approach lies in matching the derivative manifolds. Let $y^{\mathrm{PINN}}(t)$ be the macroscopic mass trajectory derived exactly from the high-fidelity PINN solution $u_{\mathrm{PINN}}(x,t)$ via spatial integration. Rearranging \eqref{eq:supernet_step}, the ideal residual $v_n$ that the network must learn at step $n$ is isolated as:
+
+\begin{equation}
+    v_n = \frac{y^{\mathrm{PINN}}_{n+1} - y^{\mathrm{PINN}}_n}{\Delta t} - f_{\mathrm{RT}}(y^{\mathrm{PINN}}_n, c_n; \rho, \beta).
+\end{equation}
+
+The network parameters $\phi$ are optimized offline by minimizing the Mean Squared Error over the training window:
+\begin{equation}
+    \min_{\phi} \sum_n \| g_\phi(\mathbf{s}_n) - v_n \|^2.
+\end{equation}
+Once calibrated, Equation \eqref{eq:supernet_step} acts as a real-time, compute-efficient ODE surrogate that implicitly carries the complex spatio-temporal behaviors "learned" from the PINN data.
+
+\section{Advanced Embedding of Spatial Parameters into Low-Dimensional ODEs}
+
+The primary goal of this framework is to incorporate spatial properties (e.g., heterogeneous diffusion and localized therapy) into an ODE format to circumvent computational costs. While adding the center of mass $z(t)$ provides a first-order approximation, higher-order mathematical techniques can embed spatial parameters more robustly. We propose two mechanistically motivated extensions for future work.
+
+\subsection{Moment Closure for Diffusion Dynamics}
+
+Currently, the diffusion term $D \nabla^2 u$ vanishes when integrating for the $0^{\text{th}}$ moment (mass, $y(t)$) due to boundary conditions. Consequently, the standard ODE is blind to the diffusion coefficient $D$. However, diffusion directly dictates spatial variance (how fast the tumor spreads). We can capture this by deriving ODEs for higher-order spatial moments. 
+
+Let the $k$-th spatial moment be $M_k(t) = \int_{\Omega} x^k u(x,t) \,\text{d}x$. We know $M_0(t) = y(t)$ and $M_1(t) = y(t) z(t)$. The second moment $M_2(t)$ describes spatial dispersion. Taking the time derivative of $M_2(t)$ and applying the PDE with integration by parts yields:
+
+\begin{equation}
+    \dot{M}_2(t) = \int_{\Omega} x^2 \left( D \nabla^2 u + \dots \right) \text{d}x = 2D \int_{\Omega} u\,\text{d}x + \dots = 2 D y(t) + \text{reaction terms}.
+\end{equation}
+
+Because the spatial variance is $\sigma^2(t) = \frac{M_2(t)}{y(t)} - z(t)^2$, tracking the coupled ODE system $(y, z, \sigma^2)$ explicitly introduces $D$ into the macroscopic equations. This allows the surrogate to mechanistically respond to variations in tumor invasiveness without utilizing a spatial grid.
+
+\subsection{Galerkin Projection (Proper Orthogonal Decomposition)}
+
+Instead of tracking moments, we can embed heterogeneous spatial maps (like the hypoxia mask $H(x)$ and dose mask $R(x,t)$) into an ODE system using Modal Decomposition. We approximate the spatial density as a linear combination of $K$ fixed spatial basis functions $\psi_i(x)$ and time-varying amplitudes $a_i(t)$:
+
+\begin{equation}
+    u(x,t) \approx \sum_{i=1}^K a_i(t) \psi_i(x).
+\end{equation}
+
+These basis functions can be extracted offline using Principal Component Analysis (PCA) on historical PINN data. Substituting this into the PDE \eqref{eq:pde} and taking the inner product with each basis function $\psi_j(x)$ yields a coupled system of $K$ ODEs for the amplitudes:
+
+\begin{equation}
+    \dot{a}_j(t) = D \sum_{i=1}^K \mathbf{L}_{ji} a_i(t) + \rho a_j(t) - \beta c(t) \sum_{i=1}^K \mathbf{R}_{ji} a_i(t) + \text{nonlinearities},
+\end{equation}
+
+where the matrices $\mathbf{L}_{ji} = \int \psi_j \nabla^2 \psi_i \,\text{d}x$ and $\mathbf{R}_{ji} = \int \psi_j H(x) R_0(x) \psi_i \,\text{d}x$ are computed completely offline. This approach perfectly embeds the spatial geometry of the therapy and tissue into a $K$-dimensional ODE, offering an elegant balance between spatial accuracy and computational speed.
+
 \printbibliography[heading=bibintoc,title={References}]
 
 \end{document}
