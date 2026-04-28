@@ -50,6 +50,8 @@ The results presented in this work support a central claim: in uncertainty-domin
     \item \textbf{Physics-informed surrogate models.} We derive low-dimensional surrogates from a reaction–diffusion PDE and develop Neural ODE (NODE) and PINN approaches that capture spatial effects through integral constraints and learned corrections. 
 
     \item \textbf{Accuracy-efficiency trade-off under heterogeneity.} We show that the proposed surrogates reproduce tumor mass dynamics in heterogeneous scenarios at a significantly lower computational cost, providing a robust alternative to complex PDE and data-driven models.
+
+    \item \textbf{Neural residual corrector.}  We train a compact MLP offline on randomised PDE simulations to correct the Galerkin trajectory, using a 10-dimensional feature vector that encodes IC--beam spatial alignment.  The corrector achieves near-PDE accuracy across all 16 spatial scenarios (4~IC distributions $\times$ 4~beam distributions) at inference cost indistinguishable from the Galerkin surrogate.
 \end{itemize}
 
 The proposed approach is fundamentally reduction-oriented. Our goal is not to reproduce the full spatio-temporal dynamics, but to construct low-dimensional models that accurately capture observable tumor evolution under uncertainty. This motivates the use of physics-informed surrogates as a robust and efficient alternative to high-dimensional models.
@@ -168,7 +170,7 @@ Once calibrated, Equation \eqref{eq:supernet_step} acts as a real-time, compute-
 
 \section{Advanced Embedding of Spatial Parameters into Low-Dimensional ODEs}
 
-The primary goal of this framework is to incorporate spatial properties (e.g., heterogeneous diffusion and localized therapy) into an ODE format to circumvent computational costs. While adding the center of mass $z(t)$ provides a first-order approximation, higher-order mathematical techniques can embed spatial parameters more robustly. We propose two mechanistically motivated extensions for future work.
+The primary goal of this framework is to incorporate spatial properties (e.g., heterogeneous diffusion and localized therapy) into an ODE format to circumvent computational costs. While adding the center of mass $z(t)$ provides a first-order approximation, higher-order mathematical techniques can embed spatial parameters more robustly. This section presents two analytically motivated methods and a data-driven extension.
 
 \subsection{Moment Closure for Diffusion Dynamics}
 
@@ -197,6 +199,68 @@ These basis functions can be extracted offline using Principal Component Analysi
 \end{equation}
 
 where the matrices $\mathbf{L}_{ji} = \int \psi_j \nabla^2 \psi_i \,\text{d}x$ and $\mathbf{R}_{ji} = \int \psi_j H(x) R_0(x) \psi_i \,\text{d}x$ are computed completely offline. This approach perfectly embeds the spatial geometry of the therapy and tissue into a $K$-dimensional ODE, offering an elegant balance between spatial accuracy and computational speed.
+
+\subsection{Neural Residual Corrector}
+\label{sec:neural_corrector}
+
+The Galerkin projection provides a principled embedding of spatial beam-tissue geometry through the precomputed coupling matrix $\tilde{\mathbf{R}}_{jk}$, but retains several structural errors: the mean-field nonlinear closure, the finite mode truncation, and diffusion effects on mass not captured by the Fourier ODE.  Rather than enlarging the analytical model, we adopt a complementary data-driven strategy and train a compact multi-layer perceptron (MLP) offline to correct the Galerkin residual.
+
+\subsubsection{Residual Learning Formulation}
+
+Let $U^{G}(t;\,\theta)$ denote the Galerkin prediction for scenario $\theta$ and $U^{\mathrm{PDE}}(t;\,\theta)$ be the corresponding ground truth.  The residual
+
+\begin{equation}
+    \delta(t;\,\theta) = U^{\mathrm{PDE}}(t;\,\theta) - U^{G}(t;\,\theta)
+\end{equation}
+
+is a smooth, structured signal that depends on the spatial configuration of the scenario and on time.  We approximate it with a neural network $g_\phi$:
+
+\begin{equation}
+    \hat{\delta}(t;\,\theta) = g_\phi\!\left(\mathbf{s}_t\right), \qquad
+    U^{\mathrm{NC}}(t;\,\theta) = \max\!\bigl(U^{G}(t;\,\theta) + \hat{\delta}(t;\,\theta),\; 0\bigr).
+\end{equation}
+
+\subsubsection{Feature Vector}
+
+The input $\mathbf{s}_t \in \mathbb{R}^{10}$ is assembled from the current Galerkin trajectory value, time, and fixed spatial summary statistics of the scenario that are computed once from initial fields:
+
+\begin{equation}
+    \mathbf{s}_t = \Bigl[
+        U^{G}(t),\;
+        \tfrac{t}{T},\;
+        r(t),\;
+        \tfrac{z^{\mathrm{ic}}_x}{L},\;
+        \tfrac{z^{\mathrm{ic}}_y}{L},\;
+        \tfrac{z^{\mathrm{bm}}_x}{L},\;
+        \tfrac{z^{\mathrm{bm}}_y}{L},\;
+        \tfrac{d}{L},\;
+        \bar{H},\;
+        \bar{R}
+    \Bigr],
+\end{equation}
+
+where $z^{\mathrm{ic}}$ and $z^{\mathrm{bm}}$ are the IC and beam centres of mass (normalised by $L$), $d = \|z^{\mathrm{ic}} - z^{\mathrm{bm}}\|$ is the spatial misalignment, $\bar{H}$ is the IC-weighted mean hypoxia, and $\bar{R}$ is the IC-weighted beam amplitude.  Since all entries except $U^G(t)$ and $t$ are scenario constants, no spatial grid evaluation is required at inference.
+
+\subsubsection{Architecture and Training}
+
+The network $g_\phi$ is a three-hidden-layer MLP (64--64--32 units, GELU activations, LayerNorm):
+
+\begin{equation}
+    \hat{\delta} = \mathbf{W}_4\,\text{GELU}\!\left(\mathbf{W}_3\,\text{LN}\!\left(\text{GELU}(\mathbf{W}_2\,\text{LN}(\text{GELU}(\mathbf{W}_1 \mathbf{s} + \mathbf{b}_1)) + \mathbf{b}_2)\right) + \mathbf{b}_3\right) + b_4,
+\end{equation}
+
+with approximately 6\,500 trainable parameters.  Training minimises the mean squared residual over $N_{\mathrm{train}} = 200$ randomly generated scenarios (centre locations, beam widths, and amplitudes sampled uniformly; the 16 named test cases are held out):
+
+\begin{equation}
+    \min_\phi\; \frac{1}{N_{\mathrm{train}}\,T} \sum_{\theta_i} \sum_t
+    \bigl\|g_\phi(\mathbf{s}_t;\,\theta_i) - \delta(t;\,\theta_i)\bigr\|^2.
+\end{equation}
+
+The model is trained with Adam (learning rate $10^{-3}$, cosine decay) for 200 epochs and requires approximately 2--3 minutes of CPU time.  At inference the cost is identical to Galerkin plus a negligible single forward pass over the trajectory.
+
+\subsubsection{Discussion}
+
+The Neural Corrector addresses the specific limitation of the Galerkin method for spatially misaligned scenarios, where the precomputed $\tilde{\mathbf{R}}_{jk}$ matrix may underestimate or overestimate the effective radiation coupling due to nonlinear interactions between Fourier modes and the spatial beam profile.  By conditioning on the IC--beam misalignment distance $d$ and the effective beam amplitude $\bar{R}$, the MLP learns distinct correction profiles for aligned (on-target) and misaligned (off-target) irradiation.  Notably, this does not require any additional PDE solves at inference: the 200 training simulations are a one-time offline cost shared across all future predictions.
 
 \printbibliography[heading=bibintoc,title={References}]
 
