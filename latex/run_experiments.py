@@ -1,5 +1,5 @@
 """
-Experiment orchestrator: 4 IC × 4 beam × 5 methods = 80 trajectory curves.
+Experiment orchestrator: 4 IC × 4 beam × 6 methods = 96 trajectory curves.
 
 Methods:
   PDE            – finite-difference ground truth  (src/methods/pde.py)
@@ -7,6 +7,7 @@ Methods:
   Moment Closure – centre-of-mass surrogate        (src/methods/moment_closure.py)
   Galerkin       – Fourier-ROM                     (src/methods/galerkin.py)
   NeuralCorrector– Galerkin + offline MLP residual (src/methods/neural_corrector.py)
+  PINN           – PINN-guided explicit fast rollout (src/methods/pinn.py)
 
 Usage:
     uv run python latex/run_experiments.py            # trains NC from scratch
@@ -39,10 +40,12 @@ plt.rcParams.update({
     "lines.linewidth": 1.6,
 })
 
-from src.methods          import METHOD_REGISTRY, NeuralCorrector
+from src.methods          import METHOD_REGISTRY, NeuralCorrector, PINNResidualMLP
 from src.methods.shared   import DIST_NAMES, DIST_LABELS, TIMES_FULL, T_MAX, T_RAD_S, T_RAD_E, L
 from src.methods.neural_corrector import CHECKPOINT_PATH
+from src.methods.pinn import CHECKPOINT_PATH as PINN_CHECKPOINT_PATH
 from src.training.train_neural_corrector import train as train_neural_corrector
+from src.training.train_pinn_fast_rollout import train as train_pinn_fast_rollout
 
 FIGDIR = Path(__file__).parent / "figures"
 FIGDIR.mkdir(exist_ok=True)
@@ -54,6 +57,7 @@ COLORS = {
     "Moment":          "#e07b39",
     "Galerkin":        "#2196f3",
     "NeuralCorrector": "#2d6a4f",
+    "PINN":            "#9d4edd",
 }
 LINESTYLES = {
     "PDE":             "-",
@@ -61,15 +65,20 @@ LINESTYLES = {
     "Moment":          "--",
     "Galerkin":        ":",
     "NeuralCorrector": (0, (4, 1, 1, 1)),  # dash-dot-dot
+    "PINN":            (0, (1, 1)),
 }
-METHOD_NAMES  = ["PDE", "ODE", "Moment", "Galerkin", "NeuralCorrector"]
-METHOD_LABELS = ["PDE", "ODE", "Moment Cl.", "Galerkin", "Neural Corr."]
+METHOD_NAMES  = ["PDE", "ODE", "Moment", "Galerkin", "NeuralCorrector", "PINN"]
+METHOD_LABELS = ["PDE", "ODE", "Moment Cl.", "Galerkin", "Neural Corr.", "PINN-FR"]
 
 
 # ═══════════════════════════════════════════════════════════════════════════
-# Run all 16 × 5 simulations
+# Run all 16 × 6 simulations
 # ═══════════════════════════════════════════════════════════════════════════
-def run_all(N: int = 50, nc_model: NeuralCorrector | None = None) -> dict:
+def run_all(
+    N: int = 50,
+    nc_model: NeuralCorrector | None = None,
+    pinn_model: PINNResidualMLP | None = None,
+) -> dict:
     """
     Returns results[ic_name][beam_name][method_name] = U(t) array.
     """
@@ -85,6 +94,8 @@ def run_all(N: int = 50, nc_model: NeuralCorrector | None = None) -> dict:
                 kwargs: dict = {"N": N}
                 if method == "NeuralCorrector":
                     kwargs["model"] = nc_model
+                elif method == "PINN":
+                    kwargs["model"] = pinn_model
                 _, v = fn(ic, bm, **kwargs)
                 results[ic][bm][method] = v
                 done += 1
@@ -93,7 +104,7 @@ def run_all(N: int = 50, nc_model: NeuralCorrector | None = None) -> dict:
 
 
 # ═══════════════════════════════════════════════════════════════════════════
-# Figure 1: 4×4 trajectory matrix  (all 5 methods per cell)
+# Figure 1: 4×4 trajectory matrix  (all 6 methods per cell)
 # ═══════════════════════════════════════════════════════════════════════════
 def fig_4x4(results: dict, outpath: Path) -> None:
     fig, axes = plt.subplots(
@@ -102,7 +113,7 @@ def fig_4x4(results: dict, outpath: Path) -> None:
         gridspec_kw={"hspace": 0.10, "wspace": 0.07},
     )
     fig.suptitle(
-        r"$U(t) = y(t)/L^2$ — rows: tumour IC, columns: beam, 5 methods per panel"
+        r"$U(t) = y(t)/L^2$ — rows: tumour IC, columns: beam, 6 methods per panel"
         "\n(shaded = radiation window $[10,30]$)",
         fontsize=11, y=1.01,
     )
@@ -138,7 +149,11 @@ def fig_4x4(results: dict, outpath: Path) -> None:
 # ═══════════════════════════════════════════════════════════════════════════
 # Figure 2: Timing vs grid size N
 # ═══════════════════════════════════════════════════════════════════════════
-def fig_timing(outpath: Path, nc_model: NeuralCorrector | None = None) -> None:
+def fig_timing(
+    outpath: Path,
+    nc_model: NeuralCorrector | None = None,
+    pinn_model: PINNResidualMLP | None = None,
+) -> None:
     from src.methods.pde             import run_pde
     from src.methods.ode             import run_ode
     from src.methods.moment_closure  import run_moment_closure
@@ -147,6 +162,7 @@ def fig_timing(outpath: Path, nc_model: NeuralCorrector | None = None) -> None:
     from src.methods.neural_corrector import (
         extract_scenario_scalars, build_input_tensor,
     )
+    from src.methods.pinn import run_pinn
     import torch
 
     grid_sizes = [10, 15, 20, 30, 40, 50, 70, 100]
@@ -179,6 +195,8 @@ def fig_timing(outpath: Path, nc_model: NeuralCorrector | None = None) -> None:
             times_dict["NeuralCorrector"].append(times_dict["Galerkin"][-1] + (time.perf_counter()-t0))
         else:
             times_dict["NeuralCorrector"].append(times_dict["Galerkin"][-1] + 0.001)
+
+        t0=time.perf_counter(); run_pinn(ic, bm, N=N, model=pinn_model); times_dict["PINN"].append(time.perf_counter()-t0)
 
         print("  ".join(f"{m[:3]}={times_dict[m][-1]*1e3:.0f}ms" for m in METHOD_NAMES))
 
@@ -213,7 +231,7 @@ def fig_timing(outpath: Path, nc_model: NeuralCorrector | None = None) -> None:
 # Figure 3: Accuracy table — 4×4 RMSE heatmaps, one per surrogate
 # ═══════════════════════════════════════════════════════════════════════════
 def fig_accuracy_table(results: dict, outpath: Path) -> dict:
-    surrogates = ["ODE", "Moment", "Galerkin", "NeuralCorrector"]
+    surrogates = ["ODE", "Moment", "Galerkin", "NeuralCorrector", "PINN"]
     n_d = len(DIST_NAMES)
     rmse_grids = {m: np.zeros((n_d, n_d)) for m in surrogates}
     metrics: dict = {}
@@ -233,12 +251,12 @@ def fig_accuracy_table(results: dict, outpath: Path) -> dict:
                 metrics[ic][bm][mname]  = {"rmse": rmse, "relative_error": rmse / denom}
 
     vmax = max(g.max() for g in rmse_grids.values()) * 1.05
-    fig, axes = plt.subplots(1, 4, figsize=(18, 4))
+    fig, axes = plt.subplots(1, 5, figsize=(21, 4))
     fig.suptitle(
         "RMSE vs. PDE  (rows = IC distribution, cols = beam distribution)",
         fontsize=10.5,
     )
-    surr_labels = ["ODE", "Moment\nClosure", "Galerkin", "Neural\nCorrector"]
+    surr_labels = ["ODE", "Moment\nClosure", "Galerkin", "Neural\nCorrector", "PINN\nFast Rollout"]
     for ax, mname, slabel in zip(axes, surrogates, surr_labels):
         mat = rmse_grids[mname]
         im  = ax.imshow(mat, cmap="YlOrRd", aspect="auto", vmin=0, vmax=vmax)
@@ -254,7 +272,7 @@ def fig_accuracy_table(results: dict, outpath: Path) -> dict:
                 ax.text(jj, ii, f"{v:.3f}", ha="center", va="center",
                         fontsize=7.5, color=clr)
 
-    plt.tight_layout()
+    plt.tight_layout(rect=[0, 0, 1, 0.93])
     fig.savefig(outpath)
     plt.close(fig)
     print(f"  Saved: {outpath.name}")
@@ -290,7 +308,7 @@ def fig_publication(results: dict, outpath: Path) -> None:
              ha="center", fontsize=9.8, fontweight="bold")
     fig.text(0.52, 0.955, r"Final PDE density $u(\mathbf{x},\,T{=}40)$" + "\n(cyan = beam)",
              ha="center", fontsize=9.8, fontweight="bold")
-    fig.text(0.81, 0.955, r"$U(t) = y(t)/L^2$ — all 5 methods",
+    fig.text(0.81, 0.955, r"$U(t) = y(t)/L^2$ — all 6 methods",
              ha="center", fontsize=9.8, fontweight="bold")
 
     last_im = None
@@ -360,26 +378,35 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     print("=" * 70)
-    print("Cancer-surrogate experiments: 4 IC × 4 beam × 5 methods = 80 curves")
+    print("Cancer-surrogate experiments: 4 IC × 4 beam × 6 methods = 96 curves")
     print("=" * 70)
 
-    # Step 1: Neural Corrector
-    if args.skip_train and CHECKPOINT_PATH.exists():
+    # Step 1: learned low-dimensional correctors
+    import torch
+
+    if args.skip_train and CHECKPOINT_PATH.exists() and PINN_CHECKPOINT_PATH.exists():
         print(f"\n[1/6] Loading Neural Corrector from {CHECKPOINT_PATH.name} …")
-        import torch
-        from src.methods.neural_corrector import NeuralCorrector
         ckpt = torch.load(CHECKPOINT_PATH, map_location="cpu", weights_only=False)
         nc_model = NeuralCorrector()
         nc_model.load_state_dict(ckpt["state_dict"])
         nc_model.eval()
+
+        print(f"[1/6] Loading PINN fast-rollout model from {PINN_CHECKPOINT_PATH.name} …")
+        ckpt_pinn = torch.load(PINN_CHECKPOINT_PATH, map_location="cpu", weights_only=False)
+        pinn_model = PINNResidualMLP()
+        pinn_model.load_state_dict(ckpt_pinn["state_dict"])
+        pinn_model.eval()
     else:
         print("\n[1/6] Training Neural Corrector …")
         nc_model = train_neural_corrector(n_scenarios=200, n_epochs=200, N=50)
 
+        print("\n[1/6] Training PINN-guided fast rollout …")
+        pinn_model = train_pinn_fast_rollout(N=50)
+
     # Step 2: Run all experiments
-    print("\n[2/6] Running all 16 IC×beam combinations × 5 methods (N=50) …")
+    print("\n[2/6] Running all 16 IC×beam combinations × 6 methods (N=50) …")
     t0      = time.perf_counter()
-    results = run_all(N=50, nc_model=nc_model)
+    results = run_all(N=50, nc_model=nc_model, pinn_model=pinn_model)
     print(f"  Total: {time.perf_counter()-t0:.1f}s")
 
     # Steps 3-6: Figures
@@ -387,7 +414,7 @@ if __name__ == "__main__":
     fig_4x4(results, FIGDIR / "fig_4x4_trajectories.png")
 
     print("\n[4/6] Timing sweep across grid sizes …")
-    fig_timing(FIGDIR / "fig_timing.png", nc_model=nc_model)
+    fig_timing(FIGDIR / "fig_timing.png", nc_model=nc_model, pinn_model=pinn_model)
 
     print("\n[5/6] Generating accuracy table …")
     metrics = fig_accuracy_table(results, FIGDIR / "fig_accuracy_table.png")
@@ -409,7 +436,7 @@ if __name__ == "__main__":
     print(f"\nResults → {out_json}")
 
     # Print diagonal summary
-    surrogates = ["ODE", "Moment", "Galerkin", "NeuralCorrector"]
+    surrogates = ["ODE", "Moment", "Galerkin", "NeuralCorrector", "PINN"]
     print("\n" + "=" * 72)
     print(f"{'Case':<12}  " + "  ".join(f"{s[:8]:>10}" for s in surrogates))
     print("-" * 72)
