@@ -1,0 +1,477 @@
+\documentclass{article}
+
+% --- Packages and configuration ---
+\usepackage[a4paper, left=2cm, right=2cm, top=1.5cm, bottom=2cm]{geometry}
+\usepackage[T1]{fontenc}
+\usepackage[utf8]{inputenc}
+\usepackage[english]{babel}
+% --- TOC/hyperlinks stability: disable active quote shortcuts (") from babel ---
+% (prevents errors like: \language@active@arg" in .toc for titles with ")
+% \addto\extraspolish{\shorthandoff{"}} % Commented out as we are using English babel now
+\usepackage{hyperref}
+\usepackage{xcolor}
+\usepackage{graphicx}
+\usepackage{float}
+\usepackage{caption}
+\usepackage{booktabs}
+\usepackage{enumitem}
+\usepackage{fancyhdr}
+\usepackage{lastpage}
+\usepackage{listings}
+\usepackage{amsmath}
+\usepackage{tabularx}
+\usepackage{amsfonts}
+
+% --- Diagram packages (optional) ---
+\usepackage{tikz}
+\usetikzlibrary{shapes, shapes.geometric, arrows, positioning, calc}
+
+% --- tcolorbox and code configuration ---
+\usepackage{tcolorbox}
+\tcbuselibrary{listings,skins}
+
+% Color definitions
+\definecolor{myblue}{rgb}{0.2, 0.4, 1.0}
+\definecolor{lightgray}{rgb}{0.95, 0.95, 0.95}
+\definecolor{bordergray}{gray}{0.6}
+\definecolor{darkgray}{gray}{0.3}
+\definecolor{purple}{rgb}{0.5, 0, 0.5}
+
+% Link colors
+\hypersetup{
+  colorlinks=true,
+  linkcolor=black,
+  citecolor=black,
+  urlcolor=black
+}
+
+% Listing counter
+\newcounter{prognum}
+
+% Code environment definition (use short, relevant snippets)
+\newtcblisting{mycode}[1][]{
+  colback=lightgray,
+  colframe=bordergray,
+  listing only,
+  boxrule=0.2mm,
+  arc=3mm,
+  listing options={
+    language=Python,
+    basicstyle=\ttfamily\footnotesize,
+    keywordstyle=\color{myblue},
+    commentstyle=\color{darkgray},
+    stringstyle=\color{purple},
+    breaklines=true,
+    showstringspaces=false,
+    literate={ą}{{\k{a}}}1 {ć}{{\'c}}1 {ę}{{\k{e}}}1 {ł}{{\l{}}}1 {ń}{{\'n}}1 {ó}{{\'o}}1 {ś}{{\'s}}1 {ż}{{\.z}}1 {ź}{{\'z}}1
+  },
+  before={
+    \stepcounter{prognum}
+    \begin{center}
+        \textbf{Listing \theprognum:} #1
+    \end{center}
+  }
+}
+
+% Header and footer configuration
+\pagestyle{fancy}
+\fancyhf{}
+\fancyfoot[C]{Page \thepage\ of \pageref{LastPage}}
+\renewcommand{\headrulewidth}{0pt}
+\renewcommand{\footrulewidth}{0pt}
+
+% Caption settings
+\captionsetup{font=small,labelfont=bf}
+
+% Helper command for safely inserting graphics (compilation without image files)
+\newcommand{\safeincludegraphics}[2]{%
+  \IfFileExists{#1}{\includegraphics[width=#2\linewidth]{#1}}{%
+    \fbox{\parbox[c][0.22\textheight][c]{#2\linewidth}{\centering Missing image file:\\ \texttt{\detokenize{#1}}}}%
+  }%
+}
+
+\begin{document}
+
+\begin{center}
+    Complex Systems Computer Science\\
+    \vspace{130pt}
+    \textbf{Complex Systems Computer Science - Project}\\
+    \Huge\textbf{Modeling hypoxia in radiotherapy of cancer cells}\\
+    \vspace{10pt}
+    \Large{Simulating the model, PDE and ODE equations, estimation using MLP, NODE, PINN, and Supermodeling}\\
+    \vspace{40pt}
+\end{center}
+
+\vfill
+
+\begin{flushleft}
+\vspace{1em}
+    \begin{tabular}{l l}
+    Laboratory performed by: & \textbf{Paweł Jarosz (411365)}\\
+                             & \textbf{Igor Zakrocki (400535)}\\[5pt]
+    Laboratory supervisor:   & \textbf{prof. dr hab. inż. Witold Dzwinel}\\
+    \end{tabular}
+\end{flushleft}
+
+\newpage
+
+% --- Table of Contents ---
+\tableofcontents
+\newpage
+
+\begin{abstract}
+This report presents a project on modeling the dynamics of a tumor subjected to radiotherapy in the presence of hypoxia (oxygen deprivation), which significantly reduces the effectiveness of irradiation.
+The starting point is a diffusion-proliferation model with a radiation effect term (PDE).
+Next, we construct reduced models: (i) an ordinary differential equation for the average tumor density (ODE),
+(ii) a hybrid model with explicit dynamics of the normoxic/hypoxic fractions and oxygen, and (iii) a learned time step using an MLP.
+In the second part of the report, we discuss the results of the sensitivity analysis (including the efficacy-toxicity tradeoff),
+data assimilation procedures (ABC and 4D-Var), and hybrid approaches (Neural ODE, PINN, and SuperNet) used to accelerate
+and improve the quality of predictions.
+\end{abstract}
+
+\section{Introduction}
+Hypoxia (oxygen deprivation) is a common phenomenon in solid tumors and constitutes a significant mechanism of resistance to radiotherapy:
+poorly oxygenated cells are less sensitive to ionizing radiation.
+The aim of the project was to build and compare models describing:
+(i) tumor growth and invasion (diffusion + logistic proliferation),
+(ii) reduction of the cell population due to fractionated irradiation,
+(iii) modulation of treatment efficacy by hypoxia,
+as well as to test surrogate models and learning methods for rapid prediction of the treatment course.
+All simulations and model implementations (PDE/ODE, MLP, DA, NODE, PINN, SuperNet) have been prepared in a single project repository.
+
+\section{Base model: partial differential equation (PDE)}
+We consider the normalized density of cancer cells $u(\mathbf{x},t)$ (with carrying capacity $K=1$).
+The base model has the form:
+\begin{equation}
+\frac{\partial u(\mathbf{x}, t)}{\partial t}
+=
+D \nabla^2 u
++ \rho\, u\left(1-\frac{u}{K}\right)
+- \beta\, R(\mathbf{x}, t)\, H(\mathbf{x})\, u,
+\label{eq:pde}
+\end{equation}
+where:
+$D$ -- diffusion coefficient (motility/invasion),
+$\rho$ -- proliferation rate,
+$R(\mathbf{x},t)$ -- dose distribution (schedule and beam geometry),
+$H(\mathbf{x})$ -- hypoxia function (efficacy modifier),
+$\beta$ -- radiosensitivity.
+
+\paragraph{Interpretation.}
+The first term models the spread of the tumor, the second -- logistic growth,
+and the third -- cell loss proportional to the local dose and effective sensitivity (reduced by hypoxia).
+In the implementation, $R(\mathbf{x},t)$ was often written as the product
+\[
+R(\mathbf{x},t)= r(t)\,W(\mathbf{x}),
+\]
+where $r(t)$ is the fractionation schedule, and $W(\mathbf{x})$ is the spatial mask (shape/position of the beam).
+Hypoxia was modeled by the function $H(\mathbf{x})\in(0,1]$ (smaller values mean poorer oxygenation and lower dose efficacy).
+
+\subsection{Example of a 2D simulation}
+In the 2D variant, tumor density maps and mass response to cyclic dose delivery were observed
+(yellow bands on the mass plot correspond to irradiation windows).
+Fig.~\ref{fig:2d_snapshot} shows an example frame from the simulation.
+
+\begin{figure}[H]
+\centering
+\safeincludegraphics{p_figures/frame_02025.png}{0.98}
+\caption{Example 2D simulation: tumor density map and total mass trajectory over time (irradiation windows marked with vertical bands).}
+\label{fig:2d_snapshot}
+\end{figure}
+
+\section{Numerical scheme}
+For the 1D variant, finite difference discretization in space and an explicit Euler step in time were used.
+In comparative experiments, the following parameters were used:
+$N=101$ grid points, $\Delta t = 0{.}01$ and $T_{\text{end}} = 35$,
+with Dirichlet boundary conditions $u=0$ at the domain edges (density vanishing at the boundary).
+The ODE model was stepped using the same Euler method with an identical time step.
+
+\section{Surrogate model: spatial averaging (ODE)}
+To reduce complexity, we introduce the spatial average of the tumor density
+\begin{equation}
+U(t) = \frac{1}{L}\int_0^L u(x,t)\,dx,
+\end{equation}
+and then simplify the PDE terms:
+(i) the diffusion contribution vanishes after averaging under appropriate boundary conditions,
+(ii) $u(1-u)\approx U(1-U)$,
+(iii) $R(x,t)H(x)u \approx r(t)\,H_{\mathrm{eff}}\,U$,
+where $H_{\mathrm{eff}} = \frac{1}{L}\int_0^L H(x)\,dx$.
+We obtain the ODE equation:
+\begin{equation}
+\frac{dU}{dt} = \rho\,U(1-U) - \beta\,H_{\mathrm{eff}}\, r(t)\,U.
+\label{eq:ode}
+\end{equation}
+The initial condition follows from averaging: $U(0)=\frac{1}{L}\int_0^L u_0(x)\,dx$.
+
+\subsection{Comparison of PDE and ODE for a typical fractionated therapy}
+For an example configuration (e.g., $D=0.001$, $\rho=0.3$, $\beta=0.8$, $u_0(x)=0.2$ and hypoxia profile
+$H(x)=0.4+0.6\exp(-(x-0.5L)^2)$), the ODE model approximates the average mass/average density from the PDE very well,
+as seen in Fig.~\ref{fig:pde_ode_basic}.
+The applied dose schedule corresponds to three courses of five fractions (Fig.~\ref{fig:schedule}).
+
+\begin{figure}[H]
+\centering
+\safeincludegraphics{p_figures/f1.png}{0.9}
+\caption{Comparison of the spatial average from the PDE model with the ODE model for fractionated therapy (3 courses $\times$ 5 fractions).}
+\label{fig:pde_ode_basic}
+\end{figure}
+
+\begin{figure}[H]
+\centering
+\safeincludegraphics{p_figures/f2.png}{0.85}
+\caption{Example dose schedule $r(t)$: three courses of five dose pulses.}
+\label{fig:schedule}
+\end{figure}
+
+\section{Parametric experiments: dose masks and initial conditions}
+In subsequent experiments, a family of initial conditions $u_0(x)$ and spatial masks $R(x)$ was generated,
+while maintaining constant spatial integrals (comparable ``total mass'' and ``total dose'').
+Next, a grid of simulations was performed for different pairs of $(\rho,\beta)$ and the PDE was compared with the ODE.
+
+The results (Fig.~\ref{fig:grid}) show that:
+\begin{itemize}
+    \item for a homogeneous radiation mask, the ODE is a very accurate approximation of the PDE;
+    \item for heterogeneous masks, the agreement depends on the geometry: the highest accuracy is achieved
+    when the maximum of the dose mask coincides with the area of the highest cancer cell density
+    (intuitively: ``hitting'' the area of greatest mass with the beam).
+\end{itemize}
+
+\begin{figure}[H]
+\centering
+\safeincludegraphics{p_figures/f3.png}{0.98}
+\caption{Grid of PDE vs.\ ODE comparisons for 16 scenarios: different $u_0(x)$, $R(x)$ masks, and $(\rho,\beta)$ values.}
+\label{fig:grid}
+\end{figure}
+
+\section{Learned model: MLP as a time stepper}
+To further accelerate simulations, a learned time step was applied.
+The neural network approximates the mapping
+\[
+F_\theta:\ (U_n, r_n, \Delta t, \rho, \beta) \mapsto U_{n+1}.
+\]
+A simple MLP architecture was used: a 5-dimensional input, one hidden layer with 32 neurons, and a scalar output.
+Training data was generated from the ODE model (multiple trajectories for randomized parameters), and training was conducted in the time window
+$[0,20]$; then a prediction (rollout) to $T=35$ was performed.
+
+Fig.~\ref{fig:nn} compares three runs: PDE, ODE, and MLP.
+The result is qualitatively correct, but a drift outside the training window is visible (background in the plot),
+which confirms that a simple MLP stepping the scalar $U$ does not match the direct solving of differential equations.
+A natural direction for improvement is to increase model complexity or learn in space (prediction of $u(\cdot,t)$).
+
+\begin{figure}[H]
+\centering
+\safeincludegraphics{p_figures/nn_comparison.png}{0.92}
+\caption{Tumor mass comparison: PDE solution, ODE model (averaging), and MLP surrogate.}
+\label{fig:nn}
+\end{figure}
+
+\section{Sensitivity analysis and efficacy-toxicity tradeoff}
+For the 2D variant, a sensitivity analysis (Morris and Sobol methods) and a grid search of therapy parameters were performed.
+The final tumor mass was taken as the measure of the therapeutic effect, while the proposed measure for side effects was
+\textit{healthy tissue damage}:
+\begin{equation}
+D_{\text{healthy}}
+=
+\int_{0}^{T_{\text{cure}}}
+\left[
+\iint_{\Omega} (1-u(\mathbf{x},t))\, R(\mathbf{x},t)\, dA
+\right] dt,
+\label{eq:healthy_damage}
+\end{equation}
+where the factor $(1-u)$ is interpreted as the healthy tissue fraction, and time integration is performed
+only up to the point of cure (adaptive therapy: irradiation ends when the mass drops below a threshold).
+
+\subsection{Global parameter sensitivity (Morris/Sobol)}
+Fig.~\ref{fig:sens_morris_sobol} presents the results of the Morris/Sobol methods for the basic model parameters.
+Practical conclusion: the impact of diffusion $D$ on the final result is relatively small, while the proliferation rate $\rho$ plays a key role
+(tumor growth can "make up" for the loss after a dose) along with radiosensitivity $\beta$.
+
+\begin{figure}[H]
+\centering
+\safeincludegraphics{p_figures/sensitivity.png}{0.95}
+\caption{Sensitivity analysis (Morris and Sobol) for selected model parameters.}
+\label{fig:sens_morris_sobol}
+\end{figure}
+
+\subsection{Therapy sensitivity and toxicity-treatment time tradeoff}
+In the second experiment, a grid search was performed over the protocol parameters (beam intensity and interval between fractions).
+Fig.~\ref{fig:sens_tradeoff} shows:
+(i) time to cure, (ii) cumulative healthy tissue damage, and (iii) the dependency (correlation) between these two measures.
+A strong positive correlation is visible: longer treatment usually means higher toxicity because the dose accumulates over time.
+In an adaptive approach, this leads to the conclusion of a potential advantage for more "aggressive" protocols (higher intensity / shorter intervals),
+which eliminate the tumor faster and allow the therapy to be discontinued.
+
+\begin{figure}[H]
+\centering
+\safeincludegraphics{p_figures/paradox_explained.png}{0.98}
+\caption{Efficacy-toxicity tradeoff: time to cure, cumulative healthy tissue damage, and their correlation in the protocol parameter grid.}
+\label{fig:sens_tradeoff}
+\end{figure}
+
+\section{Data assimilation: parameter estimation (ABC and 4D-Var)}
+The project implemented a parameter estimation module for $\theta=[\rho,\beta,K,D]$ based on noisy observations
+within a given assimilation window (in the experiments visualized below: approx.\ $t\in[8,22]$).
+Two complementary classes of methods were used:
+
+\subsection{Approximate Bayesian Computation (ABC)}
+ABC with rejection sampling consists of:
+(i) sampling $\theta$ from a prior distribution (e.g., uniform),
+(ii) simulating the model $M(\theta)$,
+(iii) accepting $\theta$ when the distance from the observational data is less than the threshold $\varepsilon$:
+\[
+\|M(\theta)-y_{\mathrm{obs}}\|\le \varepsilon.
+\]
+In the implementation, the RMSE metric was used, and the threshold $\varepsilon$ was adaptively set as the 15th percentile
+of the smallest distance values (operation \texttt{np.quantile(distances, 0.15)}).
+
+\subsection{4D-Var}
+4D-Var minimizes the cost functional in the time window:
+\begin{equation}
+J(\theta) = \frac{1}{2}(\theta-\theta_b)^T B^{-1}(\theta-\theta_b)
++ \frac{1}{2}\sum_i \frac{\|H_i(\theta)-y_i\|^2}{\sigma_{\text{obs}}^2},
+\label{eq:4dvar}
+\end{equation}
+where $\theta_b$ is the background estimate (prior), $B$ -- background error covariance matrix,
+$H_i(\theta)$ -- observation operator (simulation value at times $t_i$),
+and $y_i$ -- observations. Optimization was performed using the L-BFGS-B method.
+
+\subsection{Results: PDE and ODE}
+Figs.~\ref{fig:da_pde_traj}--\ref{fig:da_ode_rmse} present example results of parameter calibration for the PDE and ODE models
+(the "Truth" run, observations, and trajectories after ABC and 4D-Var calibration) and a comparison of RMSE in the \emph{backward} part
+(before the assimilation window) and \emph{forward} (after the window), for various computational budgets.
+In the observed experiments, 4D-Var provided a more stable fit with an increasing budget,
+whereas ABC (a gradient-free method) was more sensitive to the threshold settings and the number of samples.
+
+\begin{figure}[H]
+\centering
+\safeincludegraphics{p_figures/ode_timeseries_budget=high.png}{0.9}
+\caption{PDE: truth ("Truth"), observations, and predictions after assimilation (ABC and 4D-Var) in the assimilation window.}
+\label{fig:da_pde_traj}
+\end{figure}
+
+\begin{figure}[H]
+\centering
+\safeincludegraphics{p_figures/pde_rmse_vs_budget.png}{0.9}
+\caption{PDE: RMSE in backward/forward tests as a function of the computational budget for ABC and 4D-Var.}
+\label{fig:da_pde_rmse}
+\end{figure}
+
+\begin{figure}[H]
+\centering
+\safeincludegraphics{p_figures/ode_timeseries_budget=high.png}{0.9}
+\caption{ODE: truth ("Truth"), observations, and predictions after assimilation (ABC and 4D-Var) in the assimilation window.}
+\label{fig:da_ode_traj}
+\end{figure}
+
+\begin{figure}[H]
+\centering
+\safeincludegraphics{p_figures/ode_rmse_vs_budget.png}{0.93}
+\caption{ODE: RMSE in backward/forward tests as a function of the computational budget for ABC and 4D-Var.}
+\label{fig:da_ode_rmse}
+\end{figure}
+
+\section{Hybrid models: Neural ODE, PINN and SuperNet}
+In subsequent stages of the project, learning models were considered that (a) preserve the physical structure, but (b) learn missing components or corrections.
+A common training window was used in all comparisons (in the plots: $t\in[10,25]$).
+
+\subsection{Neural ODE (NODE, "Supermodel")}
+In the Neural ODE, an extended state was used
+\[
+\mathbf{y}(t) = [M(t),\, C(t)]^T,
+\]
+where $M(t)$ is the tumor mass/average density, and $C(t)$ is the center of mass position:
+\[
+C(t)=\frac{\int_0^L x\,u(x,t)\,dx}{M(t)}.
+\]
+The mass dynamics were modeled hybridly as the sum of the ODE model and a learned correction:
+\begin{equation}
+\frac{dM}{dt} = f_{\mathrm{ODE}}(M,\rho,\beta,r(t)) + \mathrm{NN}_{\mathrm{mass}}(t-t_{\mathrm{in}}),
+\end{equation}
+while the center of mass dynamics were approximated purely neuronally:
+\begin{equation}
+\frac{dC}{dt} = \mathrm{NN}_{\mathrm{com}}(t-t_{\mathrm{in}}).
+\end{equation}
+The parameter $D_{\mathrm{center}}$ (beam axis position) and a hit/miss measure were also introduced:
+\[
+|C(t)-D_{\mathrm{center}}|\approx 0 \;\Rightarrow\; \text{hit},\qquad
+|C(t)-D_{\mathrm{center}}|\gg 0 \;\Rightarrow\; \text{miss}.
+\]
+
+\begin{figure}[H]
+\centering
+\safeincludegraphics{p_figures/experiment4_comparison.png}{0.88}
+\caption{Example comparison: PDE (truth), ODE (baseline), and NODE (hybrid) in the \texttt{double\_peak, center\_focus} scenario.}
+\label{fig:node_single}
+\end{figure}
+
+\subsection{PINN: Physics-Informed Neural Network}
+PINN approximates the PDE solution via a network $u_\theta(t,x)$ dependent on time, space, and scenario parameters:
+\[
+u_\theta(t,x)=\mathrm{NN}(t,x,r(t),\rho,\beta,\mathrm{IC},\mathrm{Dose}).
+\]
+The physical condition imposes a small residual of the PDE:
+\[
+\mathcal{R}_\theta(t,x)=\partial_t u_\theta - \left(D\partial_{xx}u_\theta + \rho u_\theta(1-u_\theta/K) - \beta\, r(t)\,W(x)\,H(x)\,u_\theta\right)\approx 0.
+\]
+Additionally, the observable mass was used
+$M_\theta(t)=\int_0^L u_\theta(t,x)\,dx$
+and the model was trained to reproduce the mass trajectory from the PDE in the selected time window.
+The objective function combined: the PDE residual norm, compliance with initial and boundary conditions, and the mass data fit.
+
+\begin{figure}[H]
+\centering
+\safeincludegraphics{p_figures/output4png.png}{0.7}
+\caption{Example comparison: PDE (truth), ODE (baseline), and PINN in the \texttt{double\_peak, center\_focus} scenario.}
+\label{fig:pinn_single}
+\end{figure}
+
+\subsection{SuperNet: "PINN teacher $\rightarrow$ fast rollout"}
+SuperNet is a discrete model based on \emph{residual learning} relative to the baseline ODE physics.
+For the step $n\rightarrow n+1$:
+\begin{equation}
+M_{n+1}=M_n+\Delta t\left(f_{\mathrm{ODE}}(M_n,r_n,\rho,\beta)+g_\phi(\mathbf{s}_n)\right),
+\label{eq:supernet_step}
+\end{equation}
+where $g_\phi$ is an MLP learning the missing component (residual), and $\mathbf{s}_n$ contains features such as
+$M_n,r_n,\Delta t,\rho,\beta$ and scenario parameters (IC, dose, mask scale, time).
+PINN was used as the "teacher": from the trajectory $M^{\mathrm{PINN}}$, the target residual was determined
+\[
+v_n=\frac{M^{\mathrm{PINN}}_{n+1}-\left(M^{\mathrm{PINN}}_{n}+\Delta t\,f_{\mathrm{ODE}}(M^{\mathrm{PINN}}_{n},r_n,\rho,\beta)\right)}{\Delta t},
+\]
+and then $g_\phi$ was trained by minimizing $\sum\|g_\phi(\mathbf{s}_n)-v_n\|^2$ in the training window.
+As a result, a computationally cheap rollout (like ODE) is obtained, but with a correction "learned" on PINN data.
+
+\begin{figure}[H]
+\centering
+\safeincludegraphics{p_figures/output-2png.png}{0.7}
+\caption{Example comparison: PDE (truth), ODE (baseline), NODE, and SuperNet in the \texttt{double\_peak, center\_focus} scenario.}
+\label{fig:supernet_single}
+\end{figure}
+
+\section{Conclusions}
+\begin{enumerate}
+    \item The averaged ODE model accurately reproduces the average mass dynamics from the PDE model for a homogeneous dose
+    and in scenarios where the irradiation geometry is well matched to the tumor distribution.
+    \item For heterogeneous masks, simple averaging loses geometry information and can deviate significantly from the PDE,
+    which indicates the need for reduced models that preserve spatial features (e.g., through the center of mass or additional moments).
+    \item The learned MLP time stepper allows for rapid predictions, but without physical constraints, it tends to drift
+    outside the training range. Hybrid approaches (NODE, SuperNet) mitigate this problem by embedding the baseline ODE dynamics.
+    \item Sensitivity analysis indicates the dominant role of proliferation $\rho$ and radiosensitivity $\beta$,
+    as well as a strong dependence of toxicity on treatment time in the adaptive approach.
+    \item Data assimilation modules (ABC, 4D-Var) enable parameter calibration based on observations:
+    ABC is simple and robust to the lack of gradients, while 4D-Var provides effective optimization given an available cost function and solver.
+    \item Using the PINN model as a "teacher" (approximating the $u$ field with imposed PDE constraints), we train SuperNet as a discrete model with a residual relative to the baseline ODE physics. This yields a fast rollout (cost identical to ODE), but with a dynamics correction learned on PINN data, improving prediction quality compared to the ODE alone.
+\end{enumerate}
+
+\section{Language model contribution}
+I completed the entire laboratory with the help of ChatGPT Plus and Gemini Pro. Below is the result of the prompt: "Present in bullet points in tex format the contribution of the LLM, meaning you, how much you helped in this lab":
+\begin{itemize}
+    \item Theoretical introduction to the topic of hypoxia.
+    \item Proposing an example implementation (PDE, ODE, MLP, NODE, PINN, SuperNet).
+    \item Preparation of an example implementation of data assimilation using ABC, 3D-Var, and 4D-Var methods.
+    \item Organizing and unifying simulations into individual .ipynb files.
+    \item Support in preparing the report.
+    \item Generating illustrations.
+\end{itemize}
+
+\end{document}
